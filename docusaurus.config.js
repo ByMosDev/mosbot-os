@@ -41,6 +41,8 @@ const config = {
     ],
   ],
 
+  plugins: ['docusaurus-plugin-image-zoom'],
+
   headTags: [
     {
       tagName: 'link',
@@ -151,6 +153,17 @@ const config = {
         theme: prismThemes.github,
         darkTheme: prismThemes.dracula,
         additionalLanguages: ['bash', 'json', 'yaml', 'docker'],
+      },
+      zoom: {
+        selector: '.markdown img',
+        background: {
+          light: 'rgb(255, 255, 255)',
+          dark: 'rgb(20, 20, 20)',
+        },
+        config: {
+          margin: 24,
+          scrollOffset: 0,
+        },
       },
     }),
 };

@@ -26,3 +26,73 @@ work.
   more
 - **[Deployment](./deployment/docker)** — Docker and Kubernetes deployment guides
 - **[Troubleshooting](./troubleshooting/common-issues)** — common issues and FAQ
+
+## Screenshots
+
+Click any image to zoom in.
+
+### Task Board
+
+Drag-and-drop task management with priorities, tags, and dependencies.
+
+![Task Board](/img/screenshots/mosbot-task-board.png)
+
+Task detail view with comments and activity history.
+
+![Task Board Detail](/img/screenshots/mosbot-task-board-detail.png)
+
+### Agent Monitor
+
+View active sessions, costs, and usage analytics.
+
+![Agent Monitor](/img/screenshots/mosbot-agent-monitor.png)
+
+Messages drawer for real-time agent communication.
+
+![Agent Monitor Messages](/img/screenshots/mosbot-agent-monitor-messages-drawer.png)
+
+### Org Chart
+
+Live visualization of AI agents with real-time session status.
+
+![Org Chart](/img/screenshots/mosbot-org-chart.png)
+
+### Workspaces
+
+Browse and edit agent workspace files.
+
+![Workspaces](/img/screenshots/mosbot-workspaces.png)
+
+### Standups
+
+Daily AI-generated standup summaries.
+
+![Standups](/img/screenshots/mosbot-standup.png)
+
+Standup notes and insights.
+
+![Standup Notes](/img/screenshots/mosbot-standup-notes.png)
+
+### Scheduler
+
+Schedule and monitor recurring agent tasks.
+
+![Scheduler](/img/screenshots/mosbot-ascheduler.png)
+
+### Usage & Cost
+
+Track usage metrics and cost analytics.
+
+![Usage and Cost](/img/screenshots/mosbot-usage-and-cost.png)
+
+### Model Fleet
+
+Manage and monitor your AI model fleet.
+
+![Model Fleet](/img/screenshots/mosbot-model-fleet.png)
+
+### OpenClaw Config
+
+Configure OpenClaw integration settings.
+
+![OpenClaw Config](/img/screenshots/mosbot-openclaw-config.png)

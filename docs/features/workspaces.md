@@ -13,6 +13,8 @@ directly from the MosBot Dashboard.
 :::info Requires OpenClaw Workspace Service Workspace browsing requires the OpenClaw Workspace
 Service to be configured. See [OpenClaw Integration](../openclaw/overview). :::
 
+![Workspaces](/img/screenshots/mosbot-workspaces.png)
+
 ## What workspaces contain
 
 Each agent has its own workspace directory in the OpenClaw filesystem. A typical workspace contains:

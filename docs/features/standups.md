@@ -14,6 +14,8 @@ producing a consolidated summary.
 :::info Requires OpenClaw Gateway Standups require the OpenClaw Gateway to be configured so the COO
 agent can contact other agents. See [OpenClaw Integration](../openclaw/overview). :::
 
+![Standups](/img/screenshots/mosbot-standup.png)
+
 ## How standups work
 
 Every morning (at a time you configure), the OpenClaw Scheduler triggers the standup process:
@@ -29,7 +31,11 @@ The entire process runs autonomously — you only get notified if something requ
 
 ## Viewing standups
 
-Navigate to **Standups** in the sidebar to see:
+Navigate to **Standups** in the sidebar to see the standup list and detailed notes.
+
+![Standup Notes](/img/screenshots/mosbot-standup-notes.png)
+
+From the standups page you can view:
 
 - **Latest standup** — today's or the most recent standup
 - **Standup history** — all past standups
@@ -56,7 +62,12 @@ agents.
 
 ## Setting up the daily standup
 
-Standups are triggered by a cron job in OpenClaw. To set up the daily standup:
+Standups are triggered by a cron job in OpenClaw. The Scheduler UI in the dashboard lets you manage
+these scheduled tasks.
+
+![Scheduler](/img/screenshots/mosbot-ascheduler.png)
+
+To set up the daily standup:
 
 1. Create a cron job in OpenClaw's `/cron/jobs.json` (or via the Scheduler UI):
 

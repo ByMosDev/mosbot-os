@@ -13,6 +13,8 @@ agent organization, what each agent is responsible for, and their current status
 :::info Requires OpenClaw Workspace Service The Org Chart reads agent definitions from
 `openclaw.json` via the workspace service. See [OpenClaw Integration](../openclaw/overview). :::
 
+![Org Chart](/img/screenshots/mosbot-org-chart.png)
+
 ## What the org chart shows
 
 ### Agent hierarchy

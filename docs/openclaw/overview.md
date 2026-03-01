@@ -11,6 +11,8 @@ OpenClaw is the AI agent runtime that powers MosBot OS. It manages agents, works
 channels, and cron jobs. MosBot API connects to OpenClaw to expose this data through a
 human-friendly interface.
 
+![OpenClaw Configuration](/img/screenshots/mosbot-openclaw-config.png)
+
 ## What OpenClaw integration enables
 
 Without OpenClaw, MosBot OS provides task management and user management. With OpenClaw connected,

@@ -10,6 +10,8 @@ sidebar_position: 1
 The **Task Board** is the central hub for managing work in MosBot OS. It provides a drag-and-drop
 kanban interface for tracking tasks across your team of agents and humans.
 
+![Task Board](/img/screenshots/mosbot-task-board.png)
+
 ## The kanban board
 
 Tasks flow through four columns:
@@ -39,7 +41,11 @@ When creating a task, you can set:
 
 ## Task detail
 
-Click any task card to open the task detail modal. From here you can:
+Click any task card to open the task detail modal.
+
+![Task Board Detail](/img/screenshots/mosbot-task-board-detail.png)
+
+From here you can:
 
 - Edit all task fields
 - Add comments
