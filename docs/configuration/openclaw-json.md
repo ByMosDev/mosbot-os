@@ -5,8 +5,6 @@ sidebar_label: openclaw.json Reference
 sidebar_position: 1
 ---
 
-# openclaw.json Reference
-
 `openclaw.json` is the primary configuration file for OpenClaw. It defines agents, models, channels,
 tools, memory, and all runtime behavior. This file lives in the root of the OpenClaw workspace
 filesystem.
@@ -45,7 +43,7 @@ Version tracking metadata. Updated automatically by OpenClaw when the config is 
 ```json
 {
   "meta": {
-    "lastTouchedVersion": "2026.2.26",
+    "lastTouchedVersion": "2026.3.1",
     "lastTouchedAt": "2026-02-28T14:00:00.000Z"
   }
 }
@@ -451,17 +449,21 @@ Configures communication channel integrations.
           "dmPolicy": "pairing",
           "groupPolicy": "allowlist",
           "groups": {
-            "-1003622044008": {
+            "-1001234567890": {
               "requireMention": false
             }
           },
-          "groupAllowFrom": ["tg:5386194482"]
+          "groupAllowFrom": ["tg:123456789"]
         }
       }
     }
   }
 }
 ```
+
+:::tip Use Topics for Parallel Sessions If you use a Telegram Supergroup with Topics enabled,
+OpenClaw treats each topic as a separate session. This allows a single agent to handle multiple
+parallel tasks (e.g. "Dev", "Research") without needing multiple agent definitions. :::
 
 #### Telegram account fields
 

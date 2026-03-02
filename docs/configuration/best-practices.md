@@ -5,8 +5,6 @@ sidebar_label: Best Practices
 sidebar_position: 3
 ---
 
-# Configuration Best Practices
-
 ## Secrets management
 
 ### Never put secrets directly in openclaw.json
@@ -24,7 +22,7 @@ Use environment variable references instead:
 // ❌ Bad
 {
   "env": {
-    "TELEGRAM_BOT_TOKEN": "7123456789:AAHdqTcvCH1vGWJxfSeofSs0K67lNf4vAc"
+    "TELEGRAM_BOT_TOKEN": "1234567890:AABBccDDeeFFggHHiiJJkkLLmmNNooP-example"
   }
 }
 ```

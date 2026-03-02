@@ -16,7 +16,12 @@ const config = {
   trailingSlash: false,
 
   onBrokenLinks: 'throw',
-  onBrokenMarkdownLinks: 'warn',
+
+  markdown: {
+    hooks: {
+      onBrokenMarkdownLinks: 'warn',
+    },
+  },
 
   i18n: {
     defaultLocale: 'en',
@@ -99,6 +104,12 @@ const config = {
             docId: 'changelog',
             position: 'left',
             label: 'Changelog',
+          },
+          {
+            type: 'doc',
+            docId: 'known-issues',
+            position: 'left',
+            label: 'Known Issues',
           },
           {
             href: 'https://github.com/bymosbot/mosbot-api',

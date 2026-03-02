@@ -89,7 +89,7 @@ const sidebars = {
     {
       type: 'category',
       label: 'Troubleshooting',
-      items: ['troubleshooting/common-issues', 'troubleshooting/faq'],
+      items: ['troubleshooting/common-issues', 'troubleshooting/faq', 'known-issues'],
     },
     {
       type: 'doc',

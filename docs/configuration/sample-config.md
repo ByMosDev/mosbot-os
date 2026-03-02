@@ -21,7 +21,7 @@ Use this as a starting point and adapt it to your needs.
 ```json
 {
   "meta": {
-    "lastTouchedVersion": "2026.2.26",
+    "lastTouchedVersion": "2026.3.1",
     "lastTouchedAt": "2026-02-28T14:00:00.000Z"
   },
 ```
@@ -323,12 +323,12 @@ the first fallback for complex reasoning tasks.
           "dmPolicy": "pairing",
           "groupPolicy": "allowlist",
           "groups": {
-            "-1003622044008": {
+            "-1001234567890": {
               "requireMention": false
             }
           },
           "groupAllowFrom": [
-            "tg:5386194482"
+            "tg:123456789"
           ]
         },
         "maya": {
@@ -336,7 +336,7 @@ the first fallback for complex reasoning tasks.
           "dmPolicy": "pairing",
           "groupPolicy": "allowlist",
           "groupAllowFrom": [
-            "tg:5386194482"
+            "tg:123456789"
           ]
         }
       }
@@ -502,3 +502,30 @@ If you're just getting started, here's a minimal configuration with a single age
   }
 }
 ```
+
+## Recommended Setup Strategy
+
+For your initial setup, we recommend starting with a **single-agent system** rather than immediately
+configuring multiple specialized agents.
+
+### Why start with one agent?
+
+1. **Simpler configuration**: You only need to manage one workspace, one identity, and one set of
+   tools.
+2. **Parallel execution**: You can still run multiple independent tasks in parallel by using
+   **Telegram Topics**.
+3. **Lower overhead**: Less context switching and easier debugging while you learn the system.
+
+### How to use Telegram Topics for parallel sessions
+
+Instead of creating separate agents for "Coding", "Research", and "General" tasks, you can use a
+single agent and separate your work into Telegram Topics (if using a Supergroup):
+
+1. Create a Telegram Supergroup and enable **Topics**.
+2. Create topics like "Dev", "Research", "General".
+3. Add your single agent to the group.
+4. Chat in the "Dev" topic for coding tasks, and "Research" for research tasks.
+
+OpenClaw treats each topic as a separate conversation context. This effectively gives you multiple
+"instances" of the same agent working in parallel, without the complexity of managing multiple agent
+definitions.

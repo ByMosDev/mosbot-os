@@ -42,6 +42,7 @@ research, product work, software development, or business operations.
   more
 - **[Deployment](./deployment/docker)** — Docker and Kubernetes deployment guides
 - **[Troubleshooting](./troubleshooting/common-issues)** — common issues and FAQ
+- **[Known Issues](./known-issues)** — current limitations and workarounds
 
 ## Screenshots
 
