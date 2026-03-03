@@ -4,25 +4,22 @@ const express = require("express");
 const fs = require("fs").promises;
 const path = require("path");
 
+const CONFIG_FILE_NAMES = new Set(["openclaw.json", "org-chart.json"]);
+
 /**
  * Build and return an Express app configured with the given options.
  *
- * Separating app creation from server startup makes the app fully testable
- * without binding to a real port.
- *
  * @param {object} opts
- * @param {string} opts.workspaceRoot   - Absolute path to the mounted workspace root
- * @param {string} opts.workspaceSubdir - Subdirectory within workspaceRoot to expose
+ * @param {string} opts.workspaceFsRoot - Absolute path to workspace files root
+ * @param {string} opts.configFsRoot - Absolute path to OpenClaw config files root
  * @param {string|undefined} opts.token - Bearer token; undefined means anonymous access
  * @param {string[]} opts.symlinkRemapPrefixes - Absolute path prefixes to remap for symlinks
  */
 function createApp(opts) {
-  const { workspaceRoot, workspaceSubdir, token, symlinkRemapPrefixes } = opts;
+  const { workspaceFsRoot, configFsRoot, token, symlinkRemapPrefixes } = opts;
 
-  const EXPOSED_ROOT = path.resolve(
-    workspaceRoot,
-    workspaceSubdir && workspaceSubdir !== "." ? workspaceSubdir : ".",
-  );
+  const WORKSPACE_FS_ROOT = path.resolve(workspaceFsRoot);
+  const CONFIG_FS_ROOT = path.resolve(configFsRoot);
 
   const app = express();
   app.use(express.json({ limit: "10mb" }));
@@ -49,44 +46,59 @@ function createApp(opts) {
 
   // ── Path helpers ───────────────────────────────────────────────────────────
 
+  function normalizeRelativePath(relativePath) {
+    const raw = typeof relativePath === "string" ? relativePath : "/";
+    const asPosix = raw.replace(/\\/g, "/");
+    return path.posix.normalize(asPosix.startsWith("/") ? asPosix : `/${asPosix}`);
+  }
+
+  function selectFsRootForPath(normalizedPath) {
+    const relative = normalizedPath.replace(/^\/+/, "");
+    return CONFIG_FILE_NAMES.has(relative) ? CONFIG_FS_ROOT : WORKSPACE_FS_ROOT;
+  }
+
   /**
-   * Assert that `resolved` is within EXPOSED_ROOT. Throws if it escapes.
+   * Assert that `resolved` is within `rootPath`. Throws if it escapes.
    * Exported for direct unit testing of the defence-in-depth guard.
    */
-  function assertWithinRoot(resolved) {
-    const rootWithSep = EXPOSED_ROOT.endsWith(path.sep)
-      ? EXPOSED_ROOT
-      : `${EXPOSED_ROOT}${path.sep}`;
-    if (resolved !== EXPOSED_ROOT && !resolved.startsWith(rootWithSep)) {
+  function assertWithinRoot(rootPath, resolved) {
+    const rootWithSep = rootPath.endsWith(path.sep) ? rootPath : `${rootPath}${path.sep}`;
+    if (resolved !== rootPath && !resolved.startsWith(rootWithSep)) {
       throw new Error("Path traversal detected");
     }
   }
 
-  function resolveSafePath(relativePath) {
-    const raw = typeof relativePath === "string" ? relativePath : "/";
-    const asPosix = raw.replace(/\\/g, "/");
-    const normalized = path.posix.normalize(
-      asPosix.startsWith("/") ? asPosix : `/${asPosix}`,
-    );
-    const relWithinRoot = normalized.replace(/^\/+/, "");
+  function resolvePathContext(relativePath) {
+    const normalizedPath = normalizeRelativePath(relativePath);
+    const rootPath = selectFsRootForPath(normalizedPath);
+    const relWithinRoot = normalizedPath.replace(/^\/+/, "");
 
-    const resolved = path.resolve(EXPOSED_ROOT, relWithinRoot);
-    assertWithinRoot(resolved);
-    return resolved;
+    const resolvedPath = path.resolve(rootPath, relWithinRoot);
+    assertWithinRoot(rootPath, resolvedPath);
+
+    return {
+      normalizedPath,
+      rootPath,
+      resolvedPath,
+    };
   }
 
-  function remapSymlinkTarget(target) {
+  function resolveSafePath(relativePath) {
+    return resolvePathContext(relativePath).resolvedPath;
+  }
+
+  function remapSymlinkTarget(target, rootPath) {
     if (!target || !path.isAbsolute(target)) return null;
     for (const prefix of symlinkRemapPrefixes) {
       if (target === prefix || target.startsWith(prefix + "/")) {
         const relative = target.substring(prefix.length);
-        return path.join(workspaceRoot, relative);
+        return path.join(rootPath, relative);
       }
     }
     return null;
   }
 
-  async function resolveWithRemap(fsPath) {
+  async function resolveWithRemap(fsPath, rootPath = WORKSPACE_FS_ROOT) {
     try {
       await fs.stat(fsPath);
       return fsPath;
@@ -95,12 +107,12 @@ function createApp(opts) {
     }
 
     let rel = fsPath;
-    if (fsPath.startsWith(EXPOSED_ROOT)) {
-      rel = fsPath.substring(EXPOSED_ROOT.length);
+    if (fsPath.startsWith(rootPath)) {
+      rel = fsPath.substring(rootPath.length);
     }
     const segments = rel.split("/").filter(Boolean);
 
-    let current = EXPOSED_ROOT;
+    let current = rootPath;
 
     for (let i = 0; i < segments.length; i++) {
       const candidate = path.join(current, segments[i]);
@@ -115,7 +127,7 @@ function createApp(opts) {
             continue;
           } catch (_) {
             const target = await fs.readlink(candidate);
-            const remapped = remapSymlinkTarget(target);
+            const remapped = remapSymlinkTarget(target, rootPath);
             if (remapped) {
               const remaining = segments.slice(i + 1).join("/");
               const fullRemapped = remaining ? path.join(remapped, remaining) : remapped;
@@ -137,7 +149,7 @@ function createApp(opts) {
     return current;
   }
 
-  async function getFileInfo(filePath, relativePath) {
+  async function getFileInfo(filePath, relativePath, rootPath) {
     const lstat = await fs.lstat(filePath);
     const isSymlink = lstat.isSymbolicLink();
 
@@ -150,7 +162,7 @@ function createApp(opts) {
       try {
         stats = await fs.stat(filePath);
       } catch (error) {
-        const remapped = remapSymlinkTarget(symlinkTarget);
+        const remapped = remapSymlinkTarget(symlinkTarget, rootPath);
         if (remapped) {
           try {
             stats = await fs.stat(remapped);
@@ -184,7 +196,7 @@ function createApp(opts) {
     return fileInfo;
   }
 
-  async function listDirectory(dirPath, relativePath, recursive = false) {
+  async function listDirectory(dirPath, relativePath, rootPath, recursive = false) {
     const entries = await fs.readdir(dirPath, { withFileTypes: true });
     const results = [];
 
@@ -193,11 +205,16 @@ function createApp(opts) {
       const entryRelativePath = path.join(relativePath, entry.name);
 
       try {
-        const info = await getFileInfo(entryPath, entryRelativePath);
+        const info = await getFileInfo(entryPath, entryRelativePath, rootPath);
         results.push(info);
 
         if (recursive && entry.isDirectory()) {
-          const subResults = await listDirectory(entryPath, entryRelativePath, true);
+          const subResults = await listDirectory(
+            entryPath,
+            entryRelativePath,
+            rootPath,
+            true,
+          );
           results.push(...subResults);
         }
       } catch (error) {
@@ -208,40 +225,68 @@ function createApp(opts) {
     return results;
   }
 
+  async function inspectRoot(rootPath) {
+    try {
+      const stats = await fs.stat(rootPath);
+      return {
+        exists: true,
+        accessible: true,
+        modified: stats.mtime.toISOString(),
+      };
+    } catch (error) {
+      return {
+        exists: false,
+        accessible: false,
+        modified: null,
+        error: error.message,
+      };
+    }
+  }
+
   // ── Routes ─────────────────────────────────────────────────────────────────
 
   app.get("/health", (req, res) => {
     res.json({
       status: "ok",
-      workspace: workspaceRoot,
-      exposedRoot: EXPOSED_ROOT,
-      workspaceSubdir,
+      workspaceFsRoot: WORKSPACE_FS_ROOT,
+      configFsRoot: CONFIG_FS_ROOT,
+      // compatibility keys
+      workspace: WORKSPACE_FS_ROOT,
+      exposedRoot: WORKSPACE_FS_ROOT,
       timestamp: new Date().toISOString(),
     });
   });
 
   app.get("/status", optionalAuth, async (req, res) => {
-    try {
-      const stats = await fs.stat(EXPOSED_ROOT);
+    const workspaceState = await inspectRoot(WORKSPACE_FS_ROOT);
+    const configState = await inspectRoot(CONFIG_FS_ROOT);
 
-      res.json({
-        workspace: workspaceRoot,
-        exposedRoot: EXPOSED_ROOT,
-        workspaceSubdir,
-        exists: true,
-        accessible: true,
-        modified: stats.mtime.toISOString(),
-      });
-    } catch (error) {
-      res.status(500).json({
-        workspace: workspaceRoot,
-        exposedRoot: EXPOSED_ROOT,
-        workspaceSubdir,
-        exists: false,
-        accessible: false,
-        error: error.message,
-      });
+    const payload = {
+      workspaceFsRoot: WORKSPACE_FS_ROOT,
+      configFsRoot: CONFIG_FS_ROOT,
+      // compatibility keys
+      workspace: WORKSPACE_FS_ROOT,
+      exposedRoot: WORKSPACE_FS_ROOT,
+      exists: workspaceState.exists,
+      accessible: workspaceState.accessible,
+      workspaceExists: workspaceState.exists,
+      workspaceAccessible: workspaceState.accessible,
+      workspaceModified: workspaceState.modified,
+      configExists: configState.exists,
+      configAccessible: configState.accessible,
+      configModified: configState.modified,
+    };
+
+    if (!workspaceState.accessible || !configState.accessible) {
+      payload.error =
+        workspaceState.error || configState.error || "Filesystem root inaccessible";
+      payload.errors = {};
+      if (workspaceState.error) payload.errors.workspace = workspaceState.error;
+      if (configState.error) payload.errors.config = configState.error;
+      return res.status(500).json(payload);
     }
+
+    return res.json(payload);
   });
 
   app.get("/files", optionalAuth, async (req, res, next) => {
@@ -249,21 +294,30 @@ function createApp(opts) {
       const { path: relativePath = "/", recursive = "false" } = req.query;
       const isRecursive = recursive === "true";
 
-      const fullPath = resolveSafePath(relativePath);
-      const resolvedPath = await resolveWithRemap(fullPath);
+      const context = resolvePathContext(relativePath);
+      const resolvedPath = await resolveWithRemap(context.resolvedPath, context.rootPath);
       const stats = await fs.stat(resolvedPath);
 
       if (!stats.isDirectory()) {
-        const info = await getFileInfo(resolvedPath, relativePath);
+        const info = await getFileInfo(
+          resolvedPath,
+          context.normalizedPath,
+          context.rootPath,
+        );
         return res.json({ files: [info], count: 1 });
       }
 
-      const files = await listDirectory(resolvedPath, relativePath, isRecursive);
+      const files = await listDirectory(
+        resolvedPath,
+        context.normalizedPath,
+        context.rootPath,
+        isRecursive,
+      );
 
       res.json({
         files,
         count: files.length,
-        path: relativePath,
+        path: context.normalizedPath,
         recursive: isRecursive,
       });
     } catch (error) {
@@ -282,8 +336,8 @@ function createApp(opts) {
         return res.status(400).json({ error: "Path parameter is required" });
       }
 
-      const fullPath = resolveSafePath(relativePath);
-      const resolvedPath = await resolveWithRemap(fullPath);
+      const context = resolvePathContext(relativePath);
+      const resolvedPath = await resolveWithRemap(context.resolvedPath, context.rootPath);
       const stats = await fs.stat(resolvedPath);
 
       if (stats.isDirectory()) {
@@ -291,7 +345,11 @@ function createApp(opts) {
       }
 
       const content = await fs.readFile(resolvedPath, encoding);
-      const info = await getFileInfo(resolvedPath, relativePath);
+      const info = await getFileInfo(
+        resolvedPath,
+        context.normalizedPath,
+        context.rootPath,
+      );
 
       res.json({
         ...info,
@@ -314,12 +372,16 @@ function createApp(opts) {
         return res.status(400).json({ error: "Path and content are required" });
       }
 
-      const fullPath = resolveSafePath(relativePath);
-      const dirPath = path.dirname(fullPath);
+      const context = resolvePathContext(relativePath);
+      const dirPath = path.dirname(context.resolvedPath);
       await fs.mkdir(dirPath, { recursive: true });
-      await fs.writeFile(fullPath, content, encoding);
+      await fs.writeFile(context.resolvedPath, content, encoding);
 
-      const info = await getFileInfo(fullPath, relativePath);
+      const info = await getFileInfo(
+        context.resolvedPath,
+        context.normalizedPath,
+        context.rootPath,
+      );
 
       res.status(201).json({
         ...info,
@@ -338,16 +400,20 @@ function createApp(opts) {
         return res.status(400).json({ error: "Path and content are required" });
       }
 
-      const fullPath = resolveSafePath(relativePath);
+      const context = resolvePathContext(relativePath);
 
       try {
-        await fs.access(fullPath);
+        await fs.access(context.resolvedPath);
       } catch (error) {
         return res.status(404).json({ error: "File not found" });
       }
 
-      await fs.writeFile(fullPath, content, encoding);
-      const info = await getFileInfo(fullPath, relativePath);
+      await fs.writeFile(context.resolvedPath, content, encoding);
+      const info = await getFileInfo(
+        context.resolvedPath,
+        context.normalizedPath,
+        context.rootPath,
+      );
 
       res.json({
         ...info,
@@ -366,13 +432,13 @@ function createApp(opts) {
         return res.status(400).json({ error: "Path parameter is required" });
       }
 
-      const fullPath = resolveSafePath(relativePath);
-      const stats = await fs.stat(fullPath);
+      const context = resolvePathContext(relativePath);
+      const stats = await fs.stat(context.resolvedPath);
 
       if (stats.isDirectory()) {
-        await fs.rm(fullPath, { recursive: true, force: true });
+        await fs.rm(context.resolvedPath, { recursive: true, force: true });
       } else {
-        await fs.unlink(fullPath);
+        await fs.unlink(context.resolvedPath);
       }
 
       res.status(204).send();
@@ -397,11 +463,15 @@ function createApp(opts) {
 
   // Expose helpers for testing
   app._assertWithinRoot = assertWithinRoot;
+  app._normalizeRelativePath = normalizeRelativePath;
+  app._selectFsRootForPath = selectFsRootForPath;
+  app._resolvePathContext = resolvePathContext;
   app._resolveSafePath = resolveSafePath;
   app._remapSymlinkTarget = remapSymlinkTarget;
   app._resolveWithRemap = resolveWithRemap;
   app._listDirectory = listDirectory;
-  app._exposedRoot = EXPOSED_ROOT;
+  app._workspaceFsRoot = WORKSPACE_FS_ROOT;
+  app._configFsRoot = CONFIG_FS_ROOT;
 
   return app;
 }

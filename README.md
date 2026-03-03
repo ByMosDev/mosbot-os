@@ -38,10 +38,11 @@ services:
     image: ghcr.io/bymosbot/mosbot-workspace-service:latest
     environment:
       WORKSPACE_SERVICE_TOKEN: your-secure-token # required
-      WORKSPACE_ROOT: /workspace
-      WORKSPACE_SUBDIR: .
+      WORKSPACE_FS_ROOT: /workspace
+      CONFIG_FS_ROOT: /openclaw-config
     volumes:
-      - openclaw-home:/workspace
+      - /path/to/openclaw-workspace:/workspace
+      - /path/to/openclaw-config:/openclaw-config
     ports:
       - "8080:8080"
 ```
@@ -52,31 +53,37 @@ services:
 docker run -d \
   --name mosbot-workspace \
   -e WORKSPACE_SERVICE_TOKEN=your-secure-token \
-  -e WORKSPACE_ROOT=/workspace \
-  -e WORKSPACE_SUBDIR=. \
+  -e WORKSPACE_FS_ROOT=/workspace \
+  -e CONFIG_FS_ROOT=/openclaw-config \
   -v /path/to/.openclaw:/workspace \
+  -v /path/to/.openclaw:/openclaw-config \
   -p 8080:8080 \
   ghcr.io/bymosbot/mosbot-workspace-service:latest
 ```
 
-For full MosBot integration (agent discovery via `openclaw.json` + Projects/Skills/Docs CRUD), use a
-read-write mount and expose the mounted root with `WORKSPACE_SUBDIR=.`.
+For full MosBot integration (agent discovery via `openclaw.json` + Projects/Skills/Docs CRUD), use
+read-write mounts for both roots.
 
 ## Environment Variables
 
 | Variable                            | Default                | Description                                                                                         |
 | ----------------------------------- | ---------------------- | --------------------------------------------------------------------------------------------------- |
 | `PORT`                              | `8080`                 | HTTP server port                                                                                    |
-| `WORKSPACE_ROOT`                    | `/workspace`           | Root directory where workspace is mounted                                                           |
-| `WORKSPACE_SUBDIR`                  | `workspace`            | Subdirectory within `WORKSPACE_ROOT` to expose (prevents browsing the entire filesystem)            |
+| `WORKSPACE_FS_ROOT`                 | `/workspace`           | Root directory for workspace files (Projects, Skills, Docs, agent workspaces)                       |
+| `CONFIG_FS_ROOT`                    | `/openclaw-config`     | Root directory for config files (`openclaw.json`, `org-chart.json`)                                 |
 | `WORKSPACE_SERVICE_TOKEN`           | —                      | **Required.** Bearer token for authentication. The service will not start without this.             |
 | `SYMLINK_REMAP_PREFIXES`            | `/home/node/.openclaw` | Comma-separated list of symlink prefixes to remap (for cross-container symlinks)                    |
 | `WORKSPACE_SERVICE_ALLOW_ANONYMOUS` | —                      | Set to `true` to disable auth requirement. **For local development only. Never use in production.** |
 
-> **Deprecated aliases** (still accepted for backward compatibility):
->
-> - `WORKSPACE_PATH` → use `WORKSPACE_ROOT` instead
-> - `AUTH_TOKEN` → use `WORKSPACE_SERVICE_TOKEN` instead
+Legacy variables `WORKSPACE_ROOT`, `WORKSPACE_SUBDIR`, `WORKSPACE_PATH`, and `AUTH_TOKEN` are no
+longer honored.
+
+## Migration from Previous Env Model
+
+- Old model: `WORKSPACE_ROOT` + `WORKSPACE_SUBDIR`
+- New model: `WORKSPACE_FS_ROOT` + `CONFIG_FS_ROOT`
+- Config files (`/openclaw.json`, `/org-chart.json`) always resolve under `CONFIG_FS_ROOT`
+- All other file paths always resolve under `WORKSPACE_FS_ROOT`
 
 ## API Endpoints
 

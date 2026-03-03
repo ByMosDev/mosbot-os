@@ -6,14 +6,10 @@ const { createApp } = require("./app");
 
 const PORT = process.env.PORT || 8080;
 
-const WORKSPACE_ROOT =
-  process.env.WORKSPACE_ROOT || process.env.WORKSPACE_PATH || "/workspace";
+const WORKSPACE_FS_ROOT = process.env.WORKSPACE_FS_ROOT || "/workspace";
+const CONFIG_FS_ROOT = process.env.CONFIG_FS_ROOT || "/openclaw-config";
 
-const WORKSPACE_SUBDIR =
-  process.env.WORKSPACE_SUBDIR === undefined ? "workspace" : process.env.WORKSPACE_SUBDIR;
-
-const WORKSPACE_SERVICE_TOKEN =
-  process.env.WORKSPACE_SERVICE_TOKEN || process.env.AUTH_TOKEN;
+const WORKSPACE_SERVICE_TOKEN = process.env.WORKSPACE_SERVICE_TOKEN;
 
 const ALLOW_ANONYMOUS = process.env.WORKSPACE_SERVICE_ALLOW_ANONYMOUS === "true";
 
@@ -35,29 +31,21 @@ if (!WORKSPACE_SERVICE_TOKEN && !ALLOW_ANONYMOUS) {
 }
 
 const app = createApp({
-  workspaceRoot: WORKSPACE_ROOT,
-  workspaceSubdir: WORKSPACE_SUBDIR,
+  workspaceFsRoot: WORKSPACE_FS_ROOT,
+  configFsRoot: CONFIG_FS_ROOT,
   token: WORKSPACE_SERVICE_TOKEN,
   symlinkRemapPrefixes: SYMLINK_REMAP_PREFIXES,
 });
 
 app.listen(PORT, () => {
   console.log(`MosBot Workspace Service running on port ${PORT}`);
-  console.log(`Workspace root: ${WORKSPACE_ROOT}`);
-  console.log(`Exposed root: ${app._exposedRoot} (subdir: ${WORKSPACE_SUBDIR || "."})`);
+  console.log(`Workspace FS root: ${WORKSPACE_FS_ROOT}`);
+  console.log(`Config FS root: ${CONFIG_FS_ROOT}`);
   console.log(
     `Auth: ${WORKSPACE_SERVICE_TOKEN ? "enabled" : "disabled (WORKSPACE_SERVICE_ALLOW_ANONYMOUS=true)"}`,
   );
   console.log(`Health check: http://localhost:${PORT}/health`);
 
-  if (process.env.WORKSPACE_PATH && !process.env.WORKSPACE_ROOT) {
-    console.warn("WARNING: Using deprecated WORKSPACE_PATH — rename to WORKSPACE_ROOT");
-  }
-  if (process.env.AUTH_TOKEN && !process.env.WORKSPACE_SERVICE_TOKEN) {
-    console.warn(
-      "WARNING: Using deprecated AUTH_TOKEN — rename to WORKSPACE_SERVICE_TOKEN",
-    );
-  }
   if (ALLOW_ANONYMOUS) {
     console.warn(
       "WARNING: WORKSPACE_SERVICE_ALLOW_ANONYMOUS=true — authentication is disabled. Do not use in production.",

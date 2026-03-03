@@ -8,21 +8,28 @@ const { createApp } = require("../src/app");
 
 describe("Files API", () => {
   let tmpDir;
+  let workspaceRoot;
+  let configRoot;
   let app;
 
   beforeAll(async () => {
     tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "ws-files-test-"));
-    // workspace root is tmpDir, exposed subdir is "workspace"
-    await fs.mkdir(path.join(tmpDir, "workspace", "subdir"), { recursive: true });
-    await fs.writeFile(path.join(tmpDir, "workspace", "hello.txt"), "hello world");
+    workspaceRoot = path.join(tmpDir, "workspace-root");
+    configRoot = path.join(tmpDir, "config-root");
+
+    await fs.mkdir(path.join(workspaceRoot, "subdir"), { recursive: true });
+    await fs.mkdir(configRoot, { recursive: true });
+
+    await fs.writeFile(path.join(workspaceRoot, "hello.txt"), "hello world");
     await fs.writeFile(
-      path.join(tmpDir, "workspace", "subdir", "nested.txt"),
+      path.join(workspaceRoot, "subdir", "nested.txt"),
       "nested content",
     );
+    await fs.writeFile(path.join(configRoot, "openclaw.json"), '{"models":[]}');
 
     app = createApp({
-      workspaceRoot: tmpDir,
-      workspaceSubdir: "workspace",
+      workspaceFsRoot: workspaceRoot,
+      configFsRoot: configRoot,
       token: undefined,
       symlinkRemapPrefixes: [],
     });
@@ -32,28 +39,25 @@ describe("Files API", () => {
     await fs.rm(tmpDir, { recursive: true, force: true });
   });
 
-  // ── GET /files ─────────────────────────────────────────────────────────────
-
   describe("GET /files", () => {
-    it("lists root directory contents", async () => {
+    it("lists root directory contents from workspace root", async () => {
       const res = await request(app).get("/files");
       expect(res.status).toBe(200);
       expect(Array.isArray(res.body.files)).toBe(true);
       expect(res.body.count).toBeGreaterThanOrEqual(2);
     });
 
-    it("lists a specific subdirectory", async () => {
+    it("lists a specific workspace subdirectory", async () => {
       const res = await request(app).get("/files?path=/subdir");
       expect(res.status).toBe(200);
       expect(res.body.files.some((f) => f.name === "nested.txt")).toBe(true);
     });
 
-    it("returns single file info when path points to a file", async () => {
-      const res = await request(app).get("/files?path=/hello.txt");
+    it("returns config file info from config root", async () => {
+      const res = await request(app).get("/files?path=/openclaw.json");
       expect(res.status).toBe(200);
       expect(res.body.files).toHaveLength(1);
-      expect(res.body.files[0].name).toBe("hello.txt");
-      expect(res.body.files[0].type).toBe("file");
+      expect(res.body.files[0].name).toBe("openclaw.json");
     });
 
     it("lists recursively when recursive=true", async () => {
@@ -69,23 +73,24 @@ describe("Files API", () => {
       expect(res.body.error).toBe("Path not found");
     });
 
-    it("normalises traversal sequences safely within the workspace root", async () => {
-      // /../../../etc/passwd normalises to /etc/passwd which resolves to
-      // EXPOSED_ROOT/etc/passwd — safely inside the workspace. The path just
-      // won't exist, so we get a 404, not a traversal error.
+    it("normalises traversal sequences safely within selected root", async () => {
       const res = await request(app).get("/files?path=/../../../etc/passwd");
       expect(res.status).toBe(404);
     });
   });
 
-  // ── GET /files/content ─────────────────────────────────────────────────────
-
   describe("GET /files/content", () => {
-    it("returns file content", async () => {
+    it("returns workspace file content", async () => {
       const res = await request(app).get("/files/content?path=/hello.txt");
       expect(res.status).toBe(200);
       expect(res.body.content).toBe("hello world");
       expect(res.body.encoding).toBe("utf8");
+    });
+
+    it("returns config file content from config root", async () => {
+      const res = await request(app).get("/files/content?path=/openclaw.json");
+      expect(res.status).toBe(200);
+      expect(res.body.content).toContain("models");
     });
 
     it("returns 400 when path parameter is missing", async () => {
@@ -107,10 +112,8 @@ describe("Files API", () => {
     });
   });
 
-  // ── POST /files ────────────────────────────────────────────────────────────
-
   describe("POST /files", () => {
-    it("creates a new file and returns 201", async () => {
+    it("creates a new workspace file and returns 201", async () => {
       const res = await request(app).post("/files").send({
         path: "/created.txt",
         content: "created content",
@@ -119,19 +122,33 @@ describe("Files API", () => {
       expect(res.body.message).toBe("File created successfully");
       expect(res.body.name).toBe("created.txt");
 
-      const actual = await fs.readFile(
-        path.join(tmpDir, "workspace", "created.txt"),
-        "utf8",
-      );
+      const actual = await fs.readFile(path.join(workspaceRoot, "created.txt"), "utf8");
       expect(actual).toBe("created content");
     });
 
-    it("creates parent directories as needed", async () => {
+    it("creates parent directories in workspace root", async () => {
       const res = await request(app).post("/files").send({
         path: "/deep/nested/file.txt",
         content: "deep content",
       });
       expect(res.status).toBe(201);
+
+      const actual = await fs.readFile(
+        path.join(workspaceRoot, "deep", "nested", "file.txt"),
+        "utf8",
+      );
+      expect(actual).toBe("deep content");
+    });
+
+    it("creates config file under config root", async () => {
+      const res = await request(app).post("/files").send({
+        path: "/org-chart.json",
+        content: '{"version":1}',
+      });
+      expect(res.status).toBe(201);
+
+      const actual = await fs.readFile(path.join(configRoot, "org-chart.json"), "utf8");
+      expect(actual).toContain("version");
     });
 
     it("returns 400 when path is missing", async () => {
@@ -147,14 +164,13 @@ describe("Files API", () => {
     });
   });
 
-  // ── PUT /files ─────────────────────────────────────────────────────────────
-
   describe("PUT /files", () => {
     beforeAll(async () => {
-      await fs.writeFile(path.join(tmpDir, "workspace", "updatable.txt"), "original");
+      await fs.writeFile(path.join(workspaceRoot, "updatable.txt"), "original");
+      await fs.writeFile(path.join(configRoot, "org-chart.json"), '{"version":1}');
     });
 
-    it("updates an existing file and returns 200", async () => {
+    it("updates an existing workspace file and returns 200", async () => {
       const res = await request(app).put("/files").send({
         path: "/updatable.txt",
         content: "updated content",
@@ -162,11 +178,19 @@ describe("Files API", () => {
       expect(res.status).toBe(200);
       expect(res.body.message).toBe("File updated successfully");
 
-      const actual = await fs.readFile(
-        path.join(tmpDir, "workspace", "updatable.txt"),
-        "utf8",
-      );
+      const actual = await fs.readFile(path.join(workspaceRoot, "updatable.txt"), "utf8");
       expect(actual).toBe("updated content");
+    });
+
+    it("updates an existing config file and returns 200", async () => {
+      const res = await request(app).put("/files").send({
+        path: "/org-chart.json",
+        content: '{"version":2}',
+      });
+      expect(res.status).toBe(200);
+
+      const actual = await fs.readFile(path.join(configRoot, "org-chart.json"), "utf8");
+      expect(actual).toContain('"version":2');
     });
 
     it("returns 404 when file does not exist", async () => {
@@ -191,29 +215,30 @@ describe("Files API", () => {
     });
   });
 
-  // ── DELETE /files ──────────────────────────────────────────────────────────
-
   describe("DELETE /files", () => {
-    it("deletes a file and returns 204", async () => {
-      await fs.writeFile(path.join(tmpDir, "workspace", "to-delete.txt"), "bye");
+    it("deletes a workspace file and returns 204", async () => {
+      await fs.writeFile(path.join(workspaceRoot, "to-delete.txt"), "bye");
       const res = await request(app).delete("/files?path=/to-delete.txt");
       expect(res.status).toBe(204);
 
       await expect(
-        fs.access(path.join(tmpDir, "workspace", "to-delete.txt")),
+        fs.access(path.join(workspaceRoot, "to-delete.txt")),
       ).rejects.toThrow();
     });
 
-    it("deletes a directory recursively and returns 204", async () => {
-      await fs.mkdir(path.join(tmpDir, "workspace", "dir-to-delete"), {
-        recursive: true,
-      });
-      await fs.writeFile(
-        path.join(tmpDir, "workspace", "dir-to-delete", "file.txt"),
-        "x",
-      );
+    it("deletes a workspace directory recursively and returns 204", async () => {
+      await fs.mkdir(path.join(workspaceRoot, "dir-to-delete"), { recursive: true });
+      await fs.writeFile(path.join(workspaceRoot, "dir-to-delete", "file.txt"), "x");
       const res = await request(app).delete("/files?path=/dir-to-delete");
       expect(res.status).toBe(204);
+    });
+
+    it("deletes a config file and returns 204", async () => {
+      await fs.writeFile(path.join(configRoot, "org-chart.json"), '{"version":2}');
+      const res = await request(app).delete("/files?path=/org-chart.json");
+      expect(res.status).toBe(204);
+
+      await expect(fs.access(path.join(configRoot, "org-chart.json"))).rejects.toThrow();
     });
 
     it("returns 400 when path parameter is missing", async () => {
@@ -228,8 +253,6 @@ describe("Files API", () => {
       expect(res.body.error).toBe("Path not found");
     });
   });
-
-  // ── Error handler ──────────────────────────────────────────────────────────
 
   describe("Error handler (next(error) paths)", () => {
     it("GET /files: returns 500 for unexpected errors (via mocked fs.readdir)", async () => {

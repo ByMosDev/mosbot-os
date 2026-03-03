@@ -13,7 +13,7 @@
 Key risks to be aware of:
 
 - **File write/delete access**: The `POST /files`, `PUT /files`, and `DELETE /files` endpoints can modify or remove files on the mounted workspace volume. Always use a strong `WORKSPACE_SERVICE_TOKEN` and restrict network access.
-- **Path traversal**: Built-in path traversal protection rejects requests that escape the configured `WORKSPACE_ROOT`/`WORKSPACE_SUBDIR`. Do not disable or weaken this check.
+- **Path traversal**: Built-in path traversal protection rejects requests that escape `WORKSPACE_FS_ROOT` or `CONFIG_FS_ROOT`. Do not disable or weaken this check.
 - **Symlink following**: The service follows symlinks to support cross-container paths. Ensure the workspace volume only contains trusted content.
 - **Token exposure**: Never log or expose `WORKSPACE_SERVICE_TOKEN` in application logs, metrics, or error responses.
 
