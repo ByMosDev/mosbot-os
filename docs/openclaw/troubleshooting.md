@@ -148,7 +148,7 @@ OpenClaw agent config.
 
 **Fix**:
 
-1. Set `OPENCLAW_PATH_REMAP_PREFIXES` in MosBot API (default: `/home/node/.openclaw`)
+1. Set `OPENCLAW_PATH_REMAP_PREFIXES` in MosBot API (default: `/home/node/.openclaw,~/.openclaw`)
 2. Include every prefix you expect, comma-separated if needed
 3. Restart MosBot API
 
