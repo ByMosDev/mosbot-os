@@ -12,9 +12,10 @@ workspace files, manage configuration, and list agents.
 
 :::info Deployment
 
-You need to run the workspace service container (`ghcr.io/bymosbot/mosbot-workspace-service`) next
-to your OpenClaw instance. See [Setting Up OpenClaw](./setup) for Docker and Kubernetes deployment
-examples. :::
+You need to run the workspace service container (`ghcr.io/bymosbot/mosbot-workspace-service:latest`)
+next to your OpenClaw instance. The image supports both `linux/amd64` and `linux/arm64` platforms.
+
+See [Setting Up OpenClaw](./setup) for Docker and Kubernetes deployment examples. :::
 
 ## What the workspace service provides
 
