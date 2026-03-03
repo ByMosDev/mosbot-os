@@ -19,6 +19,10 @@ const BUILTIN_OPENCLAW_REMAP_PREFIXES = [
   '/home/node/.openclaw',
   '~/.openclaw',
 ];
+const MAIN_WORKSPACE_REMAP_PREFIXES = new Set([
+  '/home/node/.openclaw/workspace',
+  '/~/.openclaw/workspace',
+]);
 
 // Auth middleware - require valid JWT
 const requireAuth = (req, res, next) => {
@@ -88,12 +92,20 @@ function remapWorkspacePathPrefixes(workspacePath) {
   const prefixes = getOpenClawPathRemapPrefixes();
 
   for (const prefix of prefixes) {
+    const isMainWorkspacePrefix = MAIN_WORKSPACE_REMAP_PREFIXES.has(prefix);
+
     if (workspacePath === prefix) {
+      if (isMainWorkspacePrefix) {
+        return '/workspace';
+      }
       return '/';
     }
 
     if (workspacePath.startsWith(`${prefix}/`)) {
       const remapped = workspacePath.substring(prefix.length);
+      if (isMainWorkspacePrefix) {
+        return normalizeAndValidateWorkspacePath(`/workspace${remapped}`);
+      }
       return normalizeAndValidateWorkspacePath(remapped);
     }
   }
@@ -121,7 +133,7 @@ function resolveAgentWorkspacePath(agent) {
   }
 
   if (agent?.default === true || agent?.id === 'main') {
-    return '/';
+    return '/workspace';
   }
 
   const agentId = typeof agent?.id === 'string' && agent.id.trim() ? agent.id.trim() : 'agent';
@@ -134,8 +146,8 @@ function resolveAgentWorkspacePath(agent) {
  * @returns {boolean} - True if path is allowed
  */
 function isAllowedWorkspacePath(workspacePath) {
-  // Allow root
-  if (workspacePath === '/') return true;
+  // Allow canonical main workspace virtual path
+  if (workspacePath === '/workspace' || workspacePath.startsWith('/workspace/')) return true;
 
   // Allow system config files
   if (workspacePath === '/openclaw.json' || workspacePath === '/org-chart.json') return true;
@@ -157,7 +169,7 @@ function isAllowedWorkspacePath(workspacePath) {
   )
     return true;
 
-  // Allow agent workspaces (canonical main workspace is "/"; no "/workspace" alias)
+  // Allow agent workspaces
   if (workspacePath.startsWith('/workspace-') || /^\/workspace-[a-z]+(\/|$)/.test(workspacePath))
     return true;
 
@@ -185,7 +197,7 @@ function toUpdatedAtMs(val) {
 // List workspace files (all authenticated users can view metadata)
 router.get('/workspace/files', requireAuth, async (req, res, next) => {
   try {
-    const { path: inputPath = '/', recursive = 'false' } = req.query;
+    const { path: inputPath = '/workspace', recursive = 'false' } = req.query;
     const workspacePath = normalizeRemapAndValidateWorkspacePath(inputPath);
 
     // Validate path is allowed
@@ -284,6 +296,17 @@ router.post('/workspace/files', requireAuth, requireAdmin, async (req, res, next
     }
 
     const workspacePath = normalizeRemapAndValidateWorkspacePath(inputPath);
+
+    // Validate path is allowed
+    if (!isAllowedWorkspacePath(workspacePath)) {
+      return res.status(403).json({
+        error: {
+          message: 'Access denied: Path not allowed',
+          status: 403,
+          code: 'PATH_NOT_ALLOWED',
+        },
+      });
+    }
 
     // Restrict system config files to admin/owner only (exclude 'agent' role)
     const isSystemConfigFile =
@@ -597,7 +620,7 @@ router.get('/agents', requireAuth, async (req, res, next) => {
                 title: null,
                 description: 'Operations and workflow management',
                 icon: '📊',
-                workspace: '/',
+                workspace: '/workspace',
                 isDefault: true,
               },
             ];
@@ -645,7 +668,7 @@ router.get('/agents', requireAuth, async (req, res, next) => {
             label: 'Chief Operating Officer',
             description: 'Operations and workflow management',
             icon: '📊',
-            workspace: '/',
+            workspace: '/workspace',
             isDefault: true,
           },
           {

@@ -86,12 +86,12 @@ describe('OpenClaw Workspace Access Control', () => {
       const response = await request(app)
         .get('/api/v1/openclaw/workspace/files')
         .set('Authorization', `Bearer ${token}`)
-        .query({ path: '/', recursive: 'false' });
+        .query({ path: '/workspace', recursive: 'false' });
 
       expect(response.status).toBe(200);
       expect(response.body.data).toBeDefined();
       expect(global.fetch).toHaveBeenCalledWith(
-        expect.stringContaining('/files?path=%2F&recursive=false'),
+        expect.stringContaining('/files?path=%2Fworkspace&recursive=false'),
         expect.any(Object),
       );
     });
@@ -102,7 +102,7 @@ describe('OpenClaw Workspace Access Control', () => {
       const response = await request(app)
         .get('/api/v1/openclaw/workspace/files')
         .set('Authorization', `Bearer ${token}`)
-        .query({ path: '/', recursive: 'false' });
+        .query({ path: '/workspace', recursive: 'false' });
 
       expect(response.status).toBe(200);
       expect(response.body.data).toBeDefined();
@@ -114,7 +114,7 @@ describe('OpenClaw Workspace Access Control', () => {
       const response = await request(app)
         .get('/api/v1/openclaw/workspace/files')
         .set('Authorization', `Bearer ${token}`)
-        .query({ path: '/', recursive: 'false' });
+        .query({ path: '/workspace', recursive: 'false' });
 
       expect(response.status).toBe(200);
       expect(response.body.data).toBeDefined();
@@ -124,7 +124,7 @@ describe('OpenClaw Workspace Access Control', () => {
     it('should deny unauthenticated access (401)', async () => {
       const response = await request(app)
         .get('/api/v1/openclaw/workspace/files')
-        .query({ path: '/', recursive: 'false' });
+        .query({ path: '/workspace', recursive: 'false' });
 
       expect(response.status).toBe(401);
       expect(response.body.error.message).toBe('Authorization required');
@@ -135,7 +135,7 @@ describe('OpenClaw Workspace Access Control', () => {
       const response = await request(app)
         .get('/api/v1/openclaw/workspace/files')
         .set('Authorization', 'Bearer invalid-token')
-        .query({ path: '/', recursive: 'false' });
+        .query({ path: '/workspace', recursive: 'false' });
 
       expect(response.status).toBe(401);
       expect(response.body.error.message).toBe('Invalid or expired token');
@@ -149,13 +149,13 @@ describe('OpenClaw Workspace Access Control', () => {
         .get('/api/v1/openclaw/workspace/files')
         .set('Authorization', `Bearer ${token}`)
         .query({
-          path: '/home/node/.openclaw/workspace/workspace-main/test.txt',
+          path: '/home/node/.openclaw/workspace/design-docs',
           recursive: 'false',
         });
 
       expect(response.status).toBe(200);
       expect(global.fetch).toHaveBeenCalledWith(
-        expect.stringContaining('/files?path=%2Fworkspace-main%2Ftest.txt&recursive=false'),
+        expect.stringContaining('/files?path=%2Fworkspace%2Fdesign-docs&recursive=false'),
         expect.any(Object),
       );
     });
@@ -166,11 +166,11 @@ describe('OpenClaw Workspace Access Control', () => {
       const response = await request(app)
         .get('/api/v1/openclaw/workspace/files')
         .set('Authorization', `Bearer ${token}`)
-        .query({ path: '~/.openclaw/workspace/workspace-main/foo', recursive: 'false' });
+        .query({ path: '~/.openclaw/workspace/foo', recursive: 'false' });
 
       expect(response.status).toBe(200);
       expect(global.fetch).toHaveBeenCalledWith(
-        expect.stringContaining('/files?path=%2Fworkspace-main%2Ffoo&recursive=false'),
+        expect.stringContaining('/files?path=%2Fworkspace%2Ffoo&recursive=false'),
         expect.any(Object),
       );
     });
@@ -188,7 +188,9 @@ describe('OpenClaw Workspace Access Control', () => {
 
       expect(response.status).toBe(200);
       expect(global.fetch).toHaveBeenCalledWith(
-        expect.stringContaining('/files?path=%2Fworkspace-clawboard-worker%2Ffoo&recursive=false'),
+        expect.stringContaining(
+          '/files?path=%2Fworkspace%2Fworkspace-clawboard-worker%2Ffoo&recursive=false',
+        ),
         expect.any(Object),
       );
     });
@@ -207,7 +209,9 @@ describe('OpenClaw Workspace Access Control', () => {
 
       expect(response.status).toBe(200);
       expect(global.fetch).toHaveBeenCalledWith(
-        expect.stringContaining('/files?path=%2Fworkspace-clawboard-worker%2Ffoo&recursive=false'),
+        expect.stringContaining(
+          '/files?path=%2Fworkspace%2Fworkspace-clawboard-worker%2Ffoo&recursive=false',
+        ),
         expect.any(Object),
       );
     });
@@ -228,7 +232,7 @@ describe('OpenClaw Workspace Access Control', () => {
       );
     });
 
-    it('should reject non-remapped absolute paths outside allowlist', async () => {
+    it('should reject non-remapped unsupported absolute-looking paths', async () => {
       const token = getToken('admin-id', 'admin');
 
       const response = await request(app)
@@ -241,13 +245,28 @@ describe('OpenClaw Workspace Access Control', () => {
       expect(global.fetch).not.toHaveBeenCalled();
     });
 
-    it('should reject legacy /workspace path alias', async () => {
+    it('should allow canonical main workspace subpaths under /workspace/*', async () => {
       const token = getToken('admin-id', 'admin');
 
       const response = await request(app)
         .get('/api/v1/openclaw/workspace/files')
         .set('Authorization', `Bearer ${token}`)
-        .query({ path: '/workspace', recursive: 'false' });
+        .query({ path: '/workspace/design-docs', recursive: 'false' });
+
+      expect(response.status).toBe(200);
+      expect(global.fetch).toHaveBeenCalledWith(
+        expect.stringContaining('/files?path=%2Fworkspace%2Fdesign-docs&recursive=false'),
+        expect.any(Object),
+      );
+    });
+
+    it('should reject main workspace paths outside /workspace/*', async () => {
+      const token = getToken('admin-id', 'admin');
+
+      const response = await request(app)
+        .get('/api/v1/openclaw/workspace/files')
+        .set('Authorization', `Bearer ${token}`)
+        .query({ path: '/design-docs', recursive: 'false' });
 
       expect(response.status).toBe(403);
       expect(response.body.error.code).toBe('PATH_NOT_ALLOWED');
@@ -546,7 +565,7 @@ describe('OpenClaw Workspace Access Control', () => {
               ok: true,
               status: 201,
               json: async () => ({
-                path: '/race-file.txt',
+                path: '/workspace/race-file.txt',
                 created: true,
               }),
               text: async () => 'Created',
@@ -559,11 +578,11 @@ describe('OpenClaw Workspace Access Control', () => {
           request(app)
             .post('/api/v1/openclaw/workspace/files')
             .set('Authorization', `Bearer ${token}`)
-            .send({ path: '/race-file.txt', content: 'Request 1', encoding: 'utf8' }),
+            .send({ path: '/workspace/race-file.txt', content: 'Request 1', encoding: 'utf8' }),
           request(app)
             .post('/api/v1/openclaw/workspace/files')
             .set('Authorization', `Bearer ${token}`)
-            .send({ path: '/race-file.txt', content: 'Request 2', encoding: 'utf8' }),
+            .send({ path: '/workspace/race-file.txt', content: 'Request 2', encoding: 'utf8' }),
         ]);
 
         // Both requests pass existence check (404), but workspace service should handle atomicity
@@ -596,7 +615,7 @@ describe('OpenClaw Workspace Access Control', () => {
               ok: true,
               status: 201,
               json: async () => ({
-                path: '/service-error-file.txt',
+                path: '/workspace/service-error-file.txt',
                 created: true,
               }),
               text: async () => 'Created',
@@ -607,7 +626,7 @@ describe('OpenClaw Workspace Access Control', () => {
         const response = await request(app)
           .post('/api/v1/openclaw/workspace/files')
           .set('Authorization', `Bearer ${token}`)
-          .send({ path: '/service-error-file.txt', content: 'Hello', encoding: 'utf8' });
+          .send({ path: '/workspace/service-error-file.txt', content: 'Hello', encoding: 'utf8' });
 
         // Should proceed with creation despite non-404 error
         expect(response.status).toBe(201);
@@ -625,7 +644,7 @@ describe('OpenClaw Workspace Access Control', () => {
         const response = await request(app)
           .post('/api/v1/openclaw/workspace/files')
           .set('Authorization', `Bearer ${token}`)
-          .send({ path: '/error-file.txt', content: 'Hello', encoding: 'utf8' });
+          .send({ path: '/workspace/error-file.txt', content: 'Hello', encoding: 'utf8' });
 
         // Should propagate the error (makeOpenClawRequest wraps network errors as 503)
         expect(response.status).toBe(503);
@@ -772,7 +791,7 @@ describe('OpenClaw Workspace Access Control', () => {
   });
 
   describe('GET /api/v1/openclaw/agents mapping', () => {
-    it('maps missing workspace for default/main agents to root and others to /workspace-<id>', async () => {
+    it('maps missing workspace for default/main agents to /workspace and others to /workspace-<id>', async () => {
       const token = getToken('admin-id', 'admin');
 
       global.fetch = jest.fn().mockResolvedValue({
@@ -820,10 +839,10 @@ describe('OpenClaw Workspace Access Control', () => {
       const helperAgent = response.body.data.find((a) => a.id === 'helper');
       const explicitWorkspaceAgent = response.body.data.find((a) => a.id === 'clawboard-worker');
 
-      expect(mainAgent.workspace).toBe('/');
-      expect(defaultAgent.workspace).toBe('/');
+      expect(mainAgent.workspace).toBe('/workspace');
+      expect(defaultAgent.workspace).toBe('/workspace');
       expect(helperAgent.workspace).toBe('/workspace-helper');
-      expect(explicitWorkspaceAgent.workspace).toBe('/workspace-clawboard-worker');
+      expect(explicitWorkspaceAgent.workspace).toBe('/workspace/workspace-clawboard-worker');
     });
   });
 
@@ -845,7 +864,7 @@ describe('OpenClaw Workspace Access Control', () => {
       expect(Array.isArray(response.body.data)).toBe(true);
       expect(response.body.data).toHaveLength(2);
       expect(response.body.data[0].id).toBe('coo');
-      expect(response.body.data[0].workspace).toBe('/');
+      expect(response.body.data[0].workspace).toBe('/workspace');
       expect(response.body.data[1].id).toBe('archived');
       expect(response.body.data[1].workspace).toBe('/_archived_workspace_main');
     });
