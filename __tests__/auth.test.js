@@ -15,11 +15,11 @@ describe("Authentication middleware", () => {
 
   beforeAll(async () => {
     tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "ws-auth-test-"));
-    workspaceRoot = path.join(tmpDir, "workspace-root");
     configRoot = path.join(tmpDir, "config-root");
+    workspaceRoot = path.join(configRoot, "workspace");
 
-    await fs.mkdir(workspaceRoot, { recursive: true });
     await fs.mkdir(configRoot, { recursive: true });
+    await fs.mkdir(workspaceRoot, { recursive: true });
     await fs.writeFile(path.join(workspaceRoot, "hello.txt"), "hello");
     await fs.writeFile(path.join(configRoot, "openclaw.json"), "{}");
   });
@@ -31,8 +31,8 @@ describe("Authentication middleware", () => {
   describe("when token is configured", () => {
     beforeAll(() => {
       app = createApp({
-        workspaceFsRoot: workspaceRoot,
-        configFsRoot: configRoot,
+        configRoot,
+        mainWorkspaceDir: "workspace",
         token: TOKEN,
         symlinkRemapPrefixes: [],
       });
@@ -74,8 +74,8 @@ describe("Authentication middleware", () => {
   describe("when no token is configured (anonymous mode)", () => {
     beforeAll(() => {
       app = createApp({
-        workspaceFsRoot: workspaceRoot,
-        configFsRoot: configRoot,
+        configRoot,
+        mainWorkspaceDir: "workspace",
         token: undefined,
         symlinkRemapPrefixes: [],
       });

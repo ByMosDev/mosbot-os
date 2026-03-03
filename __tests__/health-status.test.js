@@ -14,15 +14,15 @@ describe("Health and status endpoints", () => {
 
   beforeAll(async () => {
     tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "ws-health-test-"));
-    workspaceRoot = path.join(tmpDir, "workspace-root");
     configRoot = path.join(tmpDir, "config-root");
+    workspaceRoot = path.join(configRoot, "workspace");
 
-    await fs.mkdir(workspaceRoot, { recursive: true });
     await fs.mkdir(configRoot, { recursive: true });
+    await fs.mkdir(workspaceRoot, { recursive: true });
 
     app = createApp({
-      workspaceFsRoot: workspaceRoot,
-      configFsRoot: configRoot,
+      configRoot,
+      mainWorkspaceDir: "workspace",
       token: undefined,
       symlinkRemapPrefixes: [],
     });
@@ -41,6 +41,9 @@ describe("Health and status endpoints", () => {
 
     it("includes split-root fields", async () => {
       const res = await request(app).get("/health");
+      expect(res.body.configRoot).toBe(configRoot);
+      expect(res.body.mainWorkspaceDir).toBe("workspace");
+      expect(res.body.mainWorkspaceFsRoot).toBe(workspaceRoot);
       expect(res.body.workspaceFsRoot).toBe(workspaceRoot);
       expect(res.body.configFsRoot).toBe(configRoot);
       expect(res.body.timestamp).toBeDefined();
@@ -59,8 +62,8 @@ describe("Health and status endpoints", () => {
 
     it("returns 500 when workspace root does not exist", async () => {
       const missingWorkspaceApp = createApp({
-        workspaceFsRoot: "/nonexistent/path/that/does/not/exist",
-        configFsRoot: configRoot,
+        configRoot,
+        mainWorkspaceDir: "missing-main-workspace",
         token: undefined,
         symlinkRemapPrefixes: [],
       });
@@ -69,21 +72,22 @@ describe("Health and status endpoints", () => {
       expect(res.status).toBe(500);
       expect(res.body.workspaceAccessible).toBe(false);
       expect(res.body.configAccessible).toBe(true);
-      expect(res.body.errors.workspace).toBeDefined();
+      expect(res.body.errors.mainWorkspace).toBeDefined();
     });
 
     it("returns 500 when config root does not exist", async () => {
       const missingConfigApp = createApp({
-        workspaceFsRoot: workspaceRoot,
-        configFsRoot: "/nonexistent/config/path/that/does/not/exist",
+        configRoot: "/nonexistent/config/path/that/does/not/exist",
+        mainWorkspaceDir: "workspace",
         token: undefined,
         symlinkRemapPrefixes: [],
       });
 
       const res = await request(missingConfigApp).get("/status");
       expect(res.status).toBe(500);
-      expect(res.body.workspaceAccessible).toBe(true);
+      expect(res.body.workspaceAccessible).toBe(false);
       expect(res.body.configAccessible).toBe(false);
+      expect(res.body.errors.mainWorkspace).toBeDefined();
       expect(res.body.errors.config).toBeDefined();
     });
 

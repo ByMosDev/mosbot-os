@@ -79,8 +79,8 @@ describe("src/index.js — direct require (coverage)", () => {
 
   it("starts the server when WORKSPACE_SERVICE_TOKEN is set", () => {
     process.env.WORKSPACE_SERVICE_TOKEN = "test-token";
-    process.env.WORKSPACE_FS_ROOT = "/tmp/workspace";
-    process.env.CONFIG_FS_ROOT = "/tmp/config";
+    process.env.CONFIG_ROOT = "/tmp/config";
+    process.env.MAIN_WORKSPACE_DIR = "workspace";
     process.env.PORT = "0";
 
     delete require.cache[require.resolve("../src/index")];
@@ -88,8 +88,8 @@ describe("src/index.js — direct require (coverage)", () => {
 
     expect(appModule.createApp).toHaveBeenCalledWith(
       expect.objectContaining({
-        workspaceFsRoot: "/tmp/workspace",
-        configFsRoot: "/tmp/config",
+        configRoot: "/tmp/config",
+        mainWorkspaceDir: "workspace",
         token: "test-token",
       }),
     );
@@ -99,8 +99,8 @@ describe("src/index.js — direct require (coverage)", () => {
   it("starts the server when WORKSPACE_SERVICE_ALLOW_ANONYMOUS=true", () => {
     process.env.WORKSPACE_SERVICE_TOKEN = "";
     process.env.WORKSPACE_SERVICE_ALLOW_ANONYMOUS = "true";
-    process.env.WORKSPACE_FS_ROOT = "/tmp/workspace";
-    process.env.CONFIG_FS_ROOT = "/tmp/config";
+    process.env.CONFIG_ROOT = "/tmp/config";
+    process.env.MAIN_WORKSPACE_DIR = "workspace";
     process.env.PORT = "0";
 
     delete require.cache[require.resolve("../src/index")];
@@ -108,11 +108,20 @@ describe("src/index.js — direct require (coverage)", () => {
 
     expect(appModule.createApp).toHaveBeenCalledWith(
       expect.objectContaining({
-        workspaceFsRoot: "/tmp/workspace",
-        configFsRoot: "/tmp/config",
+        configRoot: "/tmp/config",
+        mainWorkspaceDir: "workspace",
         token: "",
       }),
     );
+  });
+
+  it("calls process.exit(1) when MAIN_WORKSPACE_DIR is invalid", () => {
+    process.env.WORKSPACE_SERVICE_TOKEN = "test-token";
+    process.env.CONFIG_ROOT = "/tmp/config";
+    process.env.MAIN_WORKSPACE_DIR = "../workspace";
+
+    expect(() => require("../src/index")).toThrow("process.exit called");
+    expect(exitMock).toHaveBeenCalledWith(1);
   });
 
   it("logs warning when WORKSPACE_SERVICE_ALLOW_ANONYMOUS=true", () => {
@@ -131,8 +140,8 @@ describe("src/index.js — direct require (coverage)", () => {
 
   it("logs startup information on listen", () => {
     process.env.WORKSPACE_SERVICE_TOKEN = "test-token";
-    process.env.WORKSPACE_FS_ROOT = "/tmp/workspace";
-    process.env.CONFIG_FS_ROOT = "/tmp/config";
+    process.env.CONFIG_ROOT = "/tmp/config";
+    process.env.MAIN_WORKSPACE_DIR = "workspace";
     process.env.PORT = "0";
 
     const logSpy = jest.spyOn(console, "log");
@@ -142,8 +151,9 @@ describe("src/index.js — direct require (coverage)", () => {
     expect(logSpy).toHaveBeenCalledWith(
       expect.stringMatching(/MosBot Workspace Service running on port/),
     );
-    expect(logSpy).toHaveBeenCalledWith(expect.stringMatching(/Workspace FS root:/));
-    expect(logSpy).toHaveBeenCalledWith(expect.stringMatching(/Config FS root:/));
+    expect(logSpy).toHaveBeenCalledWith(expect.stringMatching(/Config root:/));
+    expect(logSpy).toHaveBeenCalledWith(expect.stringMatching(/Main workspace dir:/));
+    expect(logSpy).toHaveBeenCalledWith(expect.stringMatching(/Main workspace FS root:/));
     expect(logSpy).toHaveBeenCalledWith(expect.stringMatching(/Health check:/));
 
     logSpy.mockRestore();
@@ -164,8 +174,8 @@ describe("src/index.js — process entrypoint (child process)", () => {
     const result = await spawnIndex({
       WORKSPACE_SERVICE_TOKEN: "test-token",
       PORT: "0",
-      WORKSPACE_FS_ROOT: "/tmp/workspace",
-      CONFIG_FS_ROOT: "/tmp/config",
+      CONFIG_ROOT: "/tmp/config",
+      MAIN_WORKSPACE_DIR: "workspace",
       _KILL_AFTER_MS: "500",
     });
 

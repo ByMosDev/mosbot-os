@@ -89,9 +89,8 @@ docker build -t mosbot-workspace-service:test .
 docker run -d \
   --name mosbot-workspace-test \
   -e WORKSPACE_SERVICE_TOKEN=test-token \
-  -e WORKSPACE_FS_ROOT=/workspace \
-  -e CONFIG_FS_ROOT=/openclaw-config \
-  -v /tmp/test-workspace:/workspace \
+  -e CONFIG_ROOT=/openclaw-config \
+  -e MAIN_WORKSPACE_DIR=workspace \
   -v /tmp/test-config:/openclaw-config \
   -p 8080:8080 \
   mosbot-workspace-service:test

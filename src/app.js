@@ -5,21 +5,23 @@ const fs = require("fs").promises;
 const path = require("path");
 
 const CONFIG_FILE_NAMES = new Set(["openclaw.json", "org-chart.json"]);
+const CONFIG_PREFIXES = ["projects", "skills", "docs"];
+const WORKSPACE_AGENT_PATH_PATTERN = /^\/workspace-[^/]+(?:\/.*)?$/;
 
 /**
  * Build and return an Express app configured with the given options.
  *
  * @param {object} opts
- * @param {string} opts.workspaceFsRoot - Absolute path to workspace files root
- * @param {string} opts.configFsRoot - Absolute path to OpenClaw config files root
+ * @param {string} opts.configRoot - Absolute path to OpenClaw config root
+ * @param {string} opts.mainWorkspaceDir - Main workspace directory name under config root
  * @param {string|undefined} opts.token - Bearer token; undefined means anonymous access
  * @param {string[]} opts.symlinkRemapPrefixes - Absolute path prefixes to remap for symlinks
  */
 function createApp(opts) {
-  const { workspaceFsRoot, configFsRoot, token, symlinkRemapPrefixes } = opts;
+  const { configRoot, mainWorkspaceDir, token, symlinkRemapPrefixes } = opts;
 
-  const WORKSPACE_FS_ROOT = path.resolve(workspaceFsRoot);
-  const CONFIG_FS_ROOT = path.resolve(configFsRoot);
+  const CONFIG_ROOT = path.resolve(configRoot);
+  const MAIN_WORKSPACE_FS_ROOT = path.resolve(CONFIG_ROOT, mainWorkspaceDir);
 
   const app = express();
   app.use(express.json({ limit: "10mb" }));
@@ -52,9 +54,23 @@ function createApp(opts) {
     return path.posix.normalize(asPosix.startsWith("/") ? asPosix : `/${asPosix}`);
   }
 
+  function isConfigRootPath(normalizedPath) {
+    if (CONFIG_FILE_NAMES.has(normalizedPath.replace(/^\/+/, ""))) {
+      return true;
+    }
+
+    if (WORKSPACE_AGENT_PATH_PATTERN.test(normalizedPath)) {
+      return true;
+    }
+
+    return CONFIG_PREFIXES.some(
+      (prefix) =>
+        normalizedPath === `/${prefix}` || normalizedPath.startsWith(`/${prefix}/`),
+    );
+  }
+
   function selectFsRootForPath(normalizedPath) {
-    const relative = normalizedPath.replace(/^\/+/, "");
-    return CONFIG_FILE_NAMES.has(relative) ? CONFIG_FS_ROOT : WORKSPACE_FS_ROOT;
+    return isConfigRootPath(normalizedPath) ? CONFIG_ROOT : MAIN_WORKSPACE_FS_ROOT;
   }
 
   /**
@@ -67,6 +83,9 @@ function createApp(opts) {
       throw new Error("Path traversal detected");
     }
   }
+
+  // Defence in depth: main workspace must stay under CONFIG_ROOT.
+  assertWithinRoot(CONFIG_ROOT, MAIN_WORKSPACE_FS_ROOT);
 
   function resolvePathContext(relativePath) {
     const normalizedPath = normalizeRelativePath(relativePath);
@@ -98,7 +117,7 @@ function createApp(opts) {
     return null;
   }
 
-  async function resolveWithRemap(fsPath, rootPath = WORKSPACE_FS_ROOT) {
+  async function resolveWithRemap(fsPath, rootPath = MAIN_WORKSPACE_FS_ROOT) {
     try {
       await fs.stat(fsPath);
       return fsPath;
@@ -248,40 +267,52 @@ function createApp(opts) {
   app.get("/health", (req, res) => {
     res.json({
       status: "ok",
-      workspaceFsRoot: WORKSPACE_FS_ROOT,
-      configFsRoot: CONFIG_FS_ROOT,
+      configRoot: CONFIG_ROOT,
+      mainWorkspaceDir,
+      mainWorkspaceFsRoot: MAIN_WORKSPACE_FS_ROOT,
+      workspaceFsRoot: MAIN_WORKSPACE_FS_ROOT,
+      configFsRoot: CONFIG_ROOT,
       // compatibility keys
-      workspace: WORKSPACE_FS_ROOT,
-      exposedRoot: WORKSPACE_FS_ROOT,
+      workspace: MAIN_WORKSPACE_FS_ROOT,
+      exposedRoot: MAIN_WORKSPACE_FS_ROOT,
       timestamp: new Date().toISOString(),
     });
   });
 
   app.get("/status", optionalAuth, async (req, res) => {
-    const workspaceState = await inspectRoot(WORKSPACE_FS_ROOT);
-    const configState = await inspectRoot(CONFIG_FS_ROOT);
+    const mainWorkspaceState = await inspectRoot(MAIN_WORKSPACE_FS_ROOT);
+    const configState = await inspectRoot(CONFIG_ROOT);
 
     const payload = {
-      workspaceFsRoot: WORKSPACE_FS_ROOT,
-      configFsRoot: CONFIG_FS_ROOT,
+      configRoot: CONFIG_ROOT,
+      mainWorkspaceDir,
+      mainWorkspaceFsRoot: MAIN_WORKSPACE_FS_ROOT,
+      workspaceFsRoot: MAIN_WORKSPACE_FS_ROOT,
+      configFsRoot: CONFIG_ROOT,
       // compatibility keys
-      workspace: WORKSPACE_FS_ROOT,
-      exposedRoot: WORKSPACE_FS_ROOT,
-      exists: workspaceState.exists,
-      accessible: workspaceState.accessible,
-      workspaceExists: workspaceState.exists,
-      workspaceAccessible: workspaceState.accessible,
-      workspaceModified: workspaceState.modified,
+      workspace: MAIN_WORKSPACE_FS_ROOT,
+      exposedRoot: MAIN_WORKSPACE_FS_ROOT,
+      exists: mainWorkspaceState.exists,
+      accessible: mainWorkspaceState.accessible,
+      workspaceExists: mainWorkspaceState.exists,
+      workspaceAccessible: mainWorkspaceState.accessible,
+      workspaceModified: mainWorkspaceState.modified,
+      mainWorkspaceExists: mainWorkspaceState.exists,
+      mainWorkspaceAccessible: mainWorkspaceState.accessible,
+      mainWorkspaceModified: mainWorkspaceState.modified,
       configExists: configState.exists,
       configAccessible: configState.accessible,
       configModified: configState.modified,
     };
 
-    if (!workspaceState.accessible || !configState.accessible) {
+    if (!mainWorkspaceState.accessible || !configState.accessible) {
       payload.error =
-        workspaceState.error || configState.error || "Filesystem root inaccessible";
+        mainWorkspaceState.error || configState.error || "Filesystem root inaccessible";
       payload.errors = {};
-      if (workspaceState.error) payload.errors.workspace = workspaceState.error;
+      if (mainWorkspaceState.error) {
+        payload.errors.mainWorkspace = mainWorkspaceState.error;
+        payload.errors.workspace = mainWorkspaceState.error;
+      }
       if (configState.error) payload.errors.config = configState.error;
       return res.status(500).json(payload);
     }
@@ -470,8 +501,11 @@ function createApp(opts) {
   app._remapSymlinkTarget = remapSymlinkTarget;
   app._resolveWithRemap = resolveWithRemap;
   app._listDirectory = listDirectory;
-  app._workspaceFsRoot = WORKSPACE_FS_ROOT;
-  app._configFsRoot = CONFIG_FS_ROOT;
+  app._workspaceFsRoot = MAIN_WORKSPACE_FS_ROOT;
+  app._configFsRoot = CONFIG_ROOT;
+  app._configRoot = CONFIG_ROOT;
+  app._mainWorkspaceDir = mainWorkspaceDir;
+  app._mainWorkspaceFsRoot = MAIN_WORKSPACE_FS_ROOT;
 
   return app;
 }

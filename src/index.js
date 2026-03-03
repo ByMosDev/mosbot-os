@@ -1,13 +1,15 @@
 "use strict";
 
 require("dotenv").config();
+const path = require("path");
 
 const { createApp } = require("./app");
 
 const PORT = process.env.PORT || 8080;
 
-const WORKSPACE_FS_ROOT = process.env.WORKSPACE_FS_ROOT || "/workspace";
-const CONFIG_FS_ROOT = process.env.CONFIG_FS_ROOT || "/openclaw-config";
+const CONFIG_ROOT = process.env.CONFIG_ROOT || "/openclaw-config";
+const MAIN_WORKSPACE_DIR = (process.env.MAIN_WORKSPACE_DIR || "workspace").trim();
+const MAIN_WORKSPACE_FS_ROOT = path.resolve(CONFIG_ROOT, MAIN_WORKSPACE_DIR);
 
 const WORKSPACE_SERVICE_TOKEN = process.env.WORKSPACE_SERVICE_TOKEN;
 
@@ -20,6 +22,11 @@ const SYMLINK_REMAP_PREFIXES = (
   .map((p) => p.trim())
   .filter(Boolean);
 
+function isValidMainWorkspaceDir(value) {
+  if (!value || value === "." || value === "..") return false;
+  return !value.includes("/") && !value.includes("\\");
+}
+
 // Enforce auth required unless explicitly opted out for local dev
 if (!WORKSPACE_SERVICE_TOKEN && !ALLOW_ANONYMOUS) {
   console.error(
@@ -30,17 +37,25 @@ if (!WORKSPACE_SERVICE_TOKEN && !ALLOW_ANONYMOUS) {
   process.exit(1);
 }
 
+if (!isValidMainWorkspaceDir(MAIN_WORKSPACE_DIR)) {
+  console.error(
+    "ERROR: MAIN_WORKSPACE_DIR must be a single directory name (no slashes, '\\\\', '.' or '..').",
+  );
+  process.exit(1);
+}
+
 const app = createApp({
-  workspaceFsRoot: WORKSPACE_FS_ROOT,
-  configFsRoot: CONFIG_FS_ROOT,
+  configRoot: CONFIG_ROOT,
+  mainWorkspaceDir: MAIN_WORKSPACE_DIR,
   token: WORKSPACE_SERVICE_TOKEN,
   symlinkRemapPrefixes: SYMLINK_REMAP_PREFIXES,
 });
 
 app.listen(PORT, () => {
   console.log(`MosBot Workspace Service running on port ${PORT}`);
-  console.log(`Workspace FS root: ${WORKSPACE_FS_ROOT}`);
-  console.log(`Config FS root: ${CONFIG_FS_ROOT}`);
+  console.log(`Config root: ${CONFIG_ROOT}`);
+  console.log(`Main workspace dir: ${MAIN_WORKSPACE_DIR}`);
+  console.log(`Main workspace FS root: ${MAIN_WORKSPACE_FS_ROOT}`);
   console.log(
     `Auth: ${WORKSPACE_SERVICE_TOKEN ? "enabled" : "disabled (WORKSPACE_SERVICE_ALLOW_ANONYMOUS=true)"}`,
   );

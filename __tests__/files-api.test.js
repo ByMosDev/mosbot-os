@@ -14,22 +14,26 @@ describe("Files API", () => {
 
   beforeAll(async () => {
     tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "ws-files-test-"));
-    workspaceRoot = path.join(tmpDir, "workspace-root");
     configRoot = path.join(tmpDir, "config-root");
+    workspaceRoot = path.join(configRoot, "workspace");
 
-    await fs.mkdir(path.join(workspaceRoot, "subdir"), { recursive: true });
     await fs.mkdir(configRoot, { recursive: true });
+    await fs.mkdir(path.join(workspaceRoot, "subdir"), { recursive: true });
+    await fs.mkdir(path.join(configRoot, "workspace-cto"), { recursive: true });
+    await fs.mkdir(path.join(configRoot, "projects"), { recursive: true });
 
     await fs.writeFile(path.join(workspaceRoot, "hello.txt"), "hello world");
     await fs.writeFile(
       path.join(workspaceRoot, "subdir", "nested.txt"),
       "nested content",
     );
+    await fs.writeFile(path.join(configRoot, "workspace-cto", "agent.txt"), "cto");
+    await fs.writeFile(path.join(configRoot, "projects", "project.txt"), "project");
     await fs.writeFile(path.join(configRoot, "openclaw.json"), '{"models":[]}');
 
     app = createApp({
-      workspaceFsRoot: workspaceRoot,
-      configFsRoot: configRoot,
+      configRoot,
+      mainWorkspaceDir: "workspace",
       token: undefined,
       symlinkRemapPrefixes: [],
     });
@@ -51,6 +55,18 @@ describe("Files API", () => {
       const res = await request(app).get("/files?path=/subdir");
       expect(res.status).toBe(200);
       expect(res.body.files.some((f) => f.name === "nested.txt")).toBe(true);
+    });
+
+    it("routes /workspace-<agent> paths to config root", async () => {
+      const res = await request(app).get("/files?path=/workspace-cto");
+      expect(res.status).toBe(200);
+      expect(res.body.files.some((f) => f.name === "agent.txt")).toBe(true);
+    });
+
+    it("routes /projects paths to config root", async () => {
+      const res = await request(app).get("/files?path=/projects");
+      expect(res.status).toBe(200);
+      expect(res.body.files.some((f) => f.name === "project.txt")).toBe(true);
     });
 
     it("returns config file info from config root", async () => {

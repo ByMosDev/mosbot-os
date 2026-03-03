@@ -14,8 +14,8 @@ describe("Symlink remapping", () => {
 
   beforeAll(async () => {
     tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "ws-symlink-test-"));
-    wsRoot = path.join(tmpDir, "workspace-root");
     configRoot = path.join(tmpDir, "config-root");
+    wsRoot = path.join(configRoot, "workspace");
 
     await fs.mkdir(path.join(wsRoot, "real"), { recursive: true });
     await fs.mkdir(configRoot, { recursive: true });
@@ -30,8 +30,8 @@ describe("Symlink remapping", () => {
     await fs.symlink(`${FOREIGN_PREFIX}/shared`, path.join(wsRoot, "link-to-foreign"));
 
     app = createApp({
-      workspaceFsRoot: wsRoot,
-      configFsRoot: configRoot,
+      configRoot,
+      mainWorkspaceDir: "workspace",
       token: undefined,
       symlinkRemapPrefixes: [FOREIGN_PREFIX],
     });
@@ -254,8 +254,8 @@ describe("Symlink remapping", () => {
   describe("assertWithinRoot root-separator branch", () => {
     it("covers root path with trailing separator behavior", () => {
       const rootApp = createApp({
-        workspaceFsRoot: path.parse(process.cwd()).root,
-        configFsRoot: configRoot,
+        configRoot: path.parse(process.cwd()).root,
+        mainWorkspaceDir: "tmp",
         token: undefined,
         symlinkRemapPrefixes: [],
       });
