@@ -13,6 +13,13 @@ const { recordActivityLogEventSafe } = require('../services/activityLogService')
 const { parseOpenClawConfig } = require('../utils/configParser');
 const { getJwtSecret } = require('../utils/jwt');
 
+const BUILTIN_OPENCLAW_REMAP_PREFIXES = [
+  '/home/node/.openclaw/workspace',
+  '~/.openclaw/workspace',
+  '/home/node/.openclaw',
+  '~/.openclaw',
+];
+
 // Auth middleware - require valid JWT
 const requireAuth = (req, res, next) => {
   const authHeader = req.headers.authorization;
@@ -63,12 +70,18 @@ function normalizeAndValidateWorkspacePath(inputPath) {
 }
 
 function getOpenClawPathRemapPrefixes() {
-  const rawPrefixes = config.openclaw.pathRemapPrefixes || '/home/node/.openclaw';
-  return String(rawPrefixes)
+  const extraPrefixes = String(config.openclaw.pathRemapPrefixes || '')
     .split(',')
+    .map((prefix) => prefix.trim())
+    .filter(Boolean);
+
+  const combined = [...BUILTIN_OPENCLAW_REMAP_PREFIXES, ...extraPrefixes]
     .map((prefix) => normalizeAndValidateWorkspacePath(prefix))
     .map((prefix) => (prefix === '/' ? prefix : prefix.replace(/\/+$/, '')))
     .filter(Boolean);
+
+  // Most specific prefix wins to avoid accidental partial remaps.
+  return [...new Set(combined)].sort((a, b) => b.length - a.length);
 }
 
 function remapWorkspacePathPrefixes(workspacePath) {
@@ -95,7 +108,16 @@ function normalizeRemapAndValidateWorkspacePath(inputPath) {
 
 function resolveAgentWorkspacePath(agent) {
   if (typeof agent?.workspace === 'string' && agent.workspace.trim()) {
-    return agent.workspace;
+    try {
+      return normalizeRemapAndValidateWorkspacePath(agent.workspace.trim());
+    } catch (error) {
+      logger.warn('Could not normalize configured agent workspace path', {
+        agentId: agent.id || null,
+        workspace: agent.workspace,
+        error: error.message,
+      });
+      return agent.workspace.trim();
+    }
   }
 
   if (agent?.default === true || agent?.id === 'main') {
@@ -633,7 +655,7 @@ router.get('/agents', requireAuth, async (req, res, next) => {
             label: 'Archived (Old Main)',
             description: 'Archived workspace files from previous iteration',
             icon: '📦',
-            workspace: '/home/node/.openclaw/_archived_workspace_main',
+            workspace: '/_archived_workspace_main',
             isDefault: false,
           },
         ],

@@ -131,8 +131,10 @@ To use agent management, workspace browsing, and org chart features, MosBot API 
 - **OpenClaw runs on a VPS or remote host** — Expose ports 8080 and 18789 on the VPS (firewall/security group). If MosBot API runs on the **same** VPS, use `http://localhost:8080` and `http://localhost:18789`. If the API runs elsewhere, use the VPS hostname or IP (e.g. `http://openclaw.example.com:8080`). Prefer a VPN or private network when exposing these services across the internet.
 
 Add to `.env`: `OPENCLAW_WORKSPACE_URL`, `OPENCLAW_WORKSPACE_TOKEN`, `OPENCLAW_GATEWAY_URL`,
-`OPENCLAW_GATEWAY_TOKEN`, and optionally `OPENCLAW_PATH_REMAP_PREFIXES` (default:
-`/home/node/.openclaw,~/.openclaw`) when your agent workspaces are reported as host-absolute paths. See
+`OPENCLAW_GATEWAY_TOKEN`, and optionally `OPENCLAW_PATH_REMAP_PREFIXES` for extra host-path
+remaps. Built-in prefixes are always active:
+`/home/node/.openclaw/workspace`, `~/.openclaw/workspace`, `/home/node/.openclaw`,
+`~/.openclaw` (most specific prefix wins). See
 [docs/openclaw/README.md](docs/openclaw/README.md) and
 [docs/guides/openclaw-local-development.md](docs/guides/openclaw-local-development.md) for details.
 

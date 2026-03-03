@@ -55,7 +55,7 @@ describe('OpenClaw Workspace Access Control', () => {
     originalFetch = global.fetch;
     mockOpenClawUrl = 'http://mock-openclaw:8080';
     process.env.OPENCLAW_WORKSPACE_URL = mockOpenClawUrl;
-    process.env.OPENCLAW_PATH_REMAP_PREFIXES = '/home/node/.openclaw,~/.openclaw';
+    process.env.OPENCLAW_PATH_REMAP_PREFIXES = '';
   });
 
   afterAll(() => {
@@ -66,6 +66,8 @@ describe('OpenClaw Workspace Access Control', () => {
   });
 
   beforeEach(() => {
+    process.env.OPENCLAW_PATH_REMAP_PREFIXES = '';
+
     // Mock successful OpenClaw responses
     global.fetch = jest.fn().mockResolvedValue({
       ok: true,
@@ -146,7 +148,7 @@ describe('OpenClaw Workspace Access Control', () => {
       const response = await request(app)
         .get('/api/v1/openclaw/workspace/files')
         .set('Authorization', `Bearer ${token}`)
-        .query({ path: '/home/node/.openclaw/workspace/test.txt', recursive: 'false' });
+        .query({ path: '/home/node/.openclaw/workspace/workspace/test.txt', recursive: 'false' });
 
       expect(response.status).toBe(200);
       expect(global.fetch).toHaveBeenCalledWith(
@@ -161,11 +163,64 @@ describe('OpenClaw Workspace Access Control', () => {
       const response = await request(app)
         .get('/api/v1/openclaw/workspace/files')
         .set('Authorization', `Bearer ${token}`)
-        .query({ path: '~/.openclaw/workspace/foo', recursive: 'false' });
+        .query({ path: '~/.openclaw/workspace/workspace/foo', recursive: 'false' });
 
       expect(response.status).toBe(200);
       expect(global.fetch).toHaveBeenCalledWith(
         expect.stringContaining('/files?path=%2Fworkspace%2Ffoo&recursive=false'),
+        expect.any(Object),
+      );
+    });
+
+    it('should prioritize the longest matching prefix to avoid nested workspace pathing', async () => {
+      const token = getToken('admin-id', 'admin');
+
+      const response = await request(app)
+        .get('/api/v1/openclaw/workspace/files')
+        .set('Authorization', `Bearer ${token}`)
+        .query({
+          path: '~/.openclaw/workspace/workspace-clawboard-worker/foo',
+          recursive: 'false',
+        });
+
+      expect(response.status).toBe(200);
+      expect(global.fetch).toHaveBeenCalledWith(
+        expect.stringContaining('/files?path=%2Fworkspace-clawboard-worker%2Ffoo&recursive=false'),
+        expect.any(Object),
+      );
+    });
+
+    it('should keep built-in remap prefixes active when custom prefixes are configured', async () => {
+      const token = getToken('admin-id', 'admin');
+      process.env.OPENCLAW_PATH_REMAP_PREFIXES = '/opt/custom';
+
+      const response = await request(app)
+        .get('/api/v1/openclaw/workspace/files')
+        .set('Authorization', `Bearer ${token}`)
+        .query({
+          path: '~/.openclaw/workspace/workspace-clawboard-worker/foo',
+          recursive: 'false',
+        });
+
+      expect(response.status).toBe(200);
+      expect(global.fetch).toHaveBeenCalledWith(
+        expect.stringContaining('/files?path=%2Fworkspace-clawboard-worker%2Ffoo&recursive=false'),
+        expect.any(Object),
+      );
+    });
+
+    it('should append custom remap prefixes from env', async () => {
+      const token = getToken('admin-id', 'admin');
+      process.env.OPENCLAW_PATH_REMAP_PREFIXES = '/opt/custom';
+
+      const response = await request(app)
+        .get('/api/v1/openclaw/workspace/files')
+        .set('Authorization', `Bearer ${token}`)
+        .query({ path: '/opt/custom/workspace-qa', recursive: 'false' });
+
+      expect(response.status).toBe(200);
+      expect(global.fetch).toHaveBeenCalledWith(
+        expect.stringContaining('/files?path=%2Fworkspace-qa&recursive=false'),
         expect.any(Object),
       );
     });
@@ -724,7 +779,7 @@ describe('OpenClaw Workspace Access Control', () => {
                 {
                   id: 'clawboard-worker',
                   name: 'Clawboard Worker',
-                  workspace: '~/.openclaw/workspace-clawboard-worker',
+                  workspace: '~/.openclaw/workspace/workspace-clawboard-worker',
                 },
               ],
             },
@@ -748,7 +803,7 @@ describe('OpenClaw Workspace Access Control', () => {
       expect(mainAgent.workspace).toBe('/');
       expect(defaultAgent.workspace).toBe('/');
       expect(helperAgent.workspace).toBe('/workspace-helper');
-      expect(explicitWorkspaceAgent.workspace).toBe('~/.openclaw/workspace-clawboard-worker');
+      expect(explicitWorkspaceAgent.workspace).toBe('/workspace-clawboard-worker');
     });
   });
 
@@ -772,7 +827,7 @@ describe('OpenClaw Workspace Access Control', () => {
       expect(response.body.data[0].id).toBe('coo');
       expect(response.body.data[0].workspace).toBe('/workspace');
       expect(response.body.data[1].id).toBe('archived');
-      expect(response.body.data[1].workspace).toBe('/home/node/.openclaw/_archived_workspace_main');
+      expect(response.body.data[1].workspace).toBe('/_archived_workspace_main');
     });
   });
 });
