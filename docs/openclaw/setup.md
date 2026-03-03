@@ -61,7 +61,7 @@ services:
 - `CONFIG_ROOT` is the single mounted OpenClaw root (typically `~/.openclaw`).
 - `MAIN_WORKSPACE_DIR` selects the main workspace subdirectory inside that root (default:
   `workspace`).
-- Main workspace virtual path is `/` (no `/workspace` alias).
+- Main workspace virtual path is `/workspace`.
 - Sub-agent workspaces resolve from `/workspace-<agent>` to `~/.openclaw/workspace-<agent>`.
 - Shared dirs `/projects`, `/skills`, `/docs` resolve to `~/.openclaw/{projects,skills,docs}`.
 - Use a read-write mount for normal MosBot usage (Projects/Skills/Docs and config edits).

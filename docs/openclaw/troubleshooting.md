@@ -158,15 +158,16 @@ OpenClaw agent config.
 
 ---
 
-### `PATH_NOT_ALLOWED` when using `/workspace/...`
+### `PATH_NOT_ALLOWED` for main workspace files
 
-**Cause**: `/workspace` is no longer a valid virtual path alias for main workspace.
+**Cause**: Main workspace paths must use the canonical `/workspace` namespace.
 
 **Fix**:
 
-1. Use `/` for main workspace root
-2. Use `/workspace-<agent>` for sub-agent workspaces
-3. Use `/projects`, `/skills`, `/docs` for shared directories
+1. Use `/workspace` for main workspace root
+2. Use `/workspace/<path>` for files under main workspace (not `/<path>`)
+3. Use `/workspace-<agent>` for sub-agent workspaces
+4. Use `/projects`, `/skills`, `/docs` for shared directories
 
 ---
 
@@ -234,7 +235,7 @@ curl -H "Authorization: Bearer <mosbot-jwt>" \
 
 # List workspace files
 curl -H "Authorization: Bearer <mosbot-jwt>" \
-  "http://localhost:3000/api/v1/openclaw/workspace/files?path=/&recursive=false"
+  "http://localhost:3000/api/v1/openclaw/workspace/files?path=/workspace&recursive=false"
 
 # Check gateway sessions
 curl -H "Authorization: Bearer <mosbot-jwt>" \

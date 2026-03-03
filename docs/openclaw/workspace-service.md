@@ -26,8 +26,8 @@ For full MosBot functionality (agent discovery + Projects/Skills/Docs file edits
 - A single read-write mount for OpenClaw root (for example `~/.openclaw:/openclaw-config`)
 
 `openclaw.json`, `org-chart.json`, shared folders (`projects`, `skills`, `docs`), and sub-agent
-workspaces (`workspace-<agent>`) are resolved from `CONFIG_ROOT`. Main workspace virtual path `/`
-resolves to `CONFIG_ROOT/MAIN_WORKSPACE_DIR`.
+workspaces (`workspace-<agent>`) are resolved from `CONFIG_ROOT`. Main workspace virtual path
+`/workspace` resolves to `CONFIG_ROOT/MAIN_WORKSPACE_DIR`.
 
 ## What the workspace service provides
 
@@ -49,7 +49,7 @@ OpenClaw Workspace Service (port 8080)
     ▼
 Workspace PVC / directories
 (`CONFIG_ROOT`: openclaw.json, org-chart.json, projects/, skills/, docs/, workspace-<agent>/...
- `CONFIG_ROOT/MAIN_WORKSPACE_DIR`: main workspace for virtual path `/`)
+ `CONFIG_ROOT/MAIN_WORKSPACE_DIR`: main workspace for virtual path `/workspace`)
 ```
 
 In Kubernetes, the workspace service runs as a sidecar container in the OpenClaw pod and shares the
@@ -93,7 +93,7 @@ A typical OpenClaw layout:
 /openclaw-config            ← CONFIG_ROOT
 ├── openclaw.json           ← OpenClaw configuration
 ├── org-chart.json          ← Org chart configuration
-├── workspace               ← main workspace (MAIN_WORKSPACE_DIR, virtual path "/")
+├── workspace               ← main workspace (MAIN_WORKSPACE_DIR, virtual path "/workspace")
 │   ├── memory/
 │   └── HEARTBEAT.md
 ├── workspace-coo/          ← sub-agent workspace (virtual path "/workspace-coo")

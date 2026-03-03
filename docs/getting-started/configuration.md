@@ -78,7 +78,7 @@ variables, the workspace browser and skills features will be unavailable.
 
 Virtual path conventions:
 
-- Main workspace: `/`
+- Main workspace: `/workspace`
 - Sub-agent workspaces: `/workspace-<agent-id>`
 - Shared directories: `/projects`, `/skills`, `/docs`
 
