@@ -1,10 +1,13 @@
-name: CI (PR)
+name: CI
 
-# Runs on pull requests to any branch. Enforces lint, tests, and coverage thresholds.
+# Runs on pull requests and pushes to main. Enforces lint, tests, and coverage thresholds.
 
 on:
   pull_request:
     branches: ['**']
+  push:
+    branches: [main]
+  workflow_dispatch:
 
 jobs:
   lint-and-test:
