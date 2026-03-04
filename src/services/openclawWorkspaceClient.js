@@ -39,13 +39,9 @@ async function makeOpenClawRequest(method, path, body = null, retryCount = 0) {
   const baseDelayMs = isTestEnvironment ? 10 : 500; // Reduce delay in test environment
   const timeoutMs = isTestEnvironment ? 8000 : 10000; // 8 seconds in test mode (was 5s), 10 seconds in production
 
-  // Only use Kubernetes default if explicitly in production environment
-  // In development, require explicit configuration to avoid connection errors
-  const openclawUrl =
-    config.openclaw.workspaceUrl ||
-    (config.nodeEnv === 'production'
-      ? 'http://openclaw-workspace.agents.svc.cluster.local:8080'
-      : null);
+  // Require explicit workspace URL in all environments.
+  // If OPENCLAW_WORKSPACE_URL is missing, workspace-backed features are disabled.
+  const openclawUrl = config.openclaw.workspaceUrl;
   const openclawToken = config.openclaw.workspaceToken;
 
   // Check if OpenClaw is configured (in local dev, URL should be explicitly set)
