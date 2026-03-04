@@ -19,7 +19,9 @@ describe("Symlink remapping", () => {
 
     await fs.mkdir(path.join(wsRoot, "real"), { recursive: true });
     await fs.mkdir(configRoot, { recursive: true });
+    await fs.mkdir(path.join(configRoot, "real"), { recursive: true });
     await fs.writeFile(path.join(wsRoot, "real", "file.txt"), "real content");
+    await fs.writeFile(path.join(configRoot, "real", "file.txt"), "config-root content");
     await fs.writeFile(path.join(configRoot, "openclaw.json"), "{}");
 
     await fs.symlink(path.join(wsRoot, "real"), path.join(wsRoot, "link-to-real"));
@@ -54,10 +56,10 @@ describe("Symlink remapping", () => {
       );
     });
 
-    it("routes workspace paths to workspace root", () => {
+    it("routes unprefixed paths to config root", () => {
       const ctx = app._resolvePathContext("/real/file.txt");
-      expect(ctx.rootPath).toBe(wsRoot);
-      expect(ctx.resolvedPath).toBe(path.join(wsRoot, "real", "file.txt"));
+      expect(ctx.rootPath).toBe(configRoot);
+      expect(ctx.resolvedPath).toBe(path.join(configRoot, "real", "file.txt"));
     });
 
     it("routes /workspace/* virtual paths to workspace root without double nesting", () => {
@@ -92,32 +94,37 @@ describe("Symlink remapping", () => {
   describe("resolveSafePath", () => {
     it("resolves a normal relative path", () => {
       const result = app._resolveSafePath("real/file.txt");
-      expect(result).toBe(path.join(wsRoot, "real", "file.txt"));
+      expect(result).toBe(path.join(configRoot, "real", "file.txt"));
     });
 
     it("resolves an absolute path", () => {
       const result = app._resolveSafePath("/real/file.txt");
+      expect(result).toBe(path.join(configRoot, "real", "file.txt"));
+    });
+
+    it("resolves /workspace/* aliases to the main workspace root", () => {
+      const result = app._resolveSafePath("/workspace/real/file.txt");
       expect(result).toBe(path.join(wsRoot, "real", "file.txt"));
     });
 
     it("resolves root path (empty string)", () => {
       const result = app._resolveSafePath("");
-      expect(result).toBe(wsRoot);
+      expect(result).toBe(configRoot);
     });
 
     it("resolves root path (slash)", () => {
       const result = app._resolveSafePath("/");
-      expect(result).toBe(wsRoot);
+      expect(result).toBe(configRoot);
     });
 
     it("normalises backslashes", () => {
       const result = app._resolveSafePath("real\\file.txt");
-      expect(result).toBe(path.join(wsRoot, "real", "file.txt"));
+      expect(result).toBe(path.join(configRoot, "real", "file.txt"));
     });
 
     it("treats non-string input as root", () => {
       const result = app._resolveSafePath(null);
-      expect(result).toBe(wsRoot);
+      expect(result).toBe(configRoot);
     });
 
     it("throws on traversal when resolved path escapes explicit root", () => {
@@ -232,7 +239,7 @@ describe("Symlink remapping", () => {
       const warnSpy = jest.spyOn(console, "warn").mockImplementation(() => {});
 
       const supertest = require("supertest");
-      const res = await supertest(app).get("/files");
+      const res = await supertest(app).get("/files?path=/workspace");
       expect(res.status).toBe(200);
 
       const warnCalls = warnSpy.mock.calls.map((c) => c[0]);
@@ -251,7 +258,7 @@ describe("Symlink remapping", () => {
 
       const supertest = require("supertest");
       try {
-        const res = await supertest(app).get("/files");
+        const res = await supertest(app).get("/files?path=/workspace");
         expect(res.status).toBe(200);
         const link = res.body.files.find((f) => f.name === "link-to-real");
         expect(link).toBeTruthy();
@@ -312,7 +319,7 @@ describe("Symlink remapping", () => {
   describe("GET /files with symlinks", () => {
     it("lists workspace root including symlink entries", async () => {
       const supertest = require("supertest");
-      const res = await supertest(app).get("/files");
+      const res = await supertest(app).get("/files?path=/workspace");
       expect(res.status).toBe(200);
       const names = res.body.files.map((f) => f.name);
       expect(names).toContain("real");
@@ -322,14 +329,14 @@ describe("Symlink remapping", () => {
 
     it("lists contents of a reachable symlink directory", async () => {
       const supertest = require("supertest");
-      const res = await supertest(app).get("/files?path=/link-to-real");
+      const res = await supertest(app).get("/files?path=/workspace/link-to-real");
       expect(res.status).toBe(200);
       expect(res.body.files.some((f) => f.name === "file.txt")).toBe(true);
     });
 
     it("lists contents of a remapped symlink directory", async () => {
       const supertest = require("supertest");
-      const res = await supertest(app).get("/files?path=/link-to-foreign");
+      const res = await supertest(app).get("/files?path=/workspace/link-to-foreign");
       expect(res.status).toBe(200);
       expect(res.body.files.some((f) => f.name === "remapped.txt")).toBe(true);
     });

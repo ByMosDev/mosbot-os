@@ -86,8 +86,10 @@ Given `CONFIG_ROOT=/openclaw-config` and `MAIN_WORKSPACE_DIR=workspace`:
 
 Routing rules:
 
-- Config-root paths: `/openclaw.json`, `/org-chart.json`, `/projects/**`, `/skills/**`, `/docs/**`, `/workspace-<agent>/**`
 - Main workspace canonical paths: `/workspace` and `/workspace/**` (mapped to `CONFIG_ROOT/MAIN_WORKSPACE_DIR`)
+- Config-root paths: every other absolute path (`/*`) including:
+  `/openclaw.json`, `/org-chart.json`, `/projects/**`, `/skills/**`, `/docs/**`,
+  `/workspace-<agent>/**`, and legacy archive paths such as `/_archived_workspace_main/**`
 
 Canonical main workspace virtual path is `/workspace`.
 

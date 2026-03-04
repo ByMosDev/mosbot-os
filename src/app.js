@@ -4,10 +4,6 @@ const express = require("express");
 const fs = require("fs").promises;
 const path = require("path");
 
-const CONFIG_FILE_NAMES = new Set(["openclaw.json", "org-chart.json"]);
-const CONFIG_PREFIXES = ["projects", "skills", "docs"];
-const WORKSPACE_AGENT_PATH_PATTERN = /^\/workspace-[^/]+(?:\/.*)?$/;
-
 /**
  * Build and return an Express app configured with the given options.
  *
@@ -54,23 +50,10 @@ function createApp(opts) {
     return path.posix.normalize(asPosix.startsWith("/") ? asPosix : `/${asPosix}`);
   }
 
-  function isConfigRootPath(normalizedPath) {
-    if (CONFIG_FILE_NAMES.has(normalizedPath.replace(/^\/+/, ""))) {
-      return true;
-    }
-
-    if (WORKSPACE_AGENT_PATH_PATTERN.test(normalizedPath)) {
-      return true;
-    }
-
-    return CONFIG_PREFIXES.some(
-      (prefix) =>
-        normalizedPath === `/${prefix}` || normalizedPath.startsWith(`/${prefix}/`),
-    );
-  }
-
   function selectFsRootForPath(normalizedPath) {
-    return isConfigRootPath(normalizedPath) ? CONFIG_ROOT : MAIN_WORKSPACE_FS_ROOT;
+    return normalizedPath === "/workspace" || normalizedPath.startsWith("/workspace/")
+      ? MAIN_WORKSPACE_FS_ROOT
+      : CONFIG_ROOT;
   }
 
   function getMainWorkspaceAliasPath(normalizedPath) {
@@ -103,10 +86,7 @@ function createApp(opts) {
     const normalizedPath = normalizeRelativePath(relativePath);
     const mainWorkspaceAliasPath = getMainWorkspaceAliasPath(normalizedPath);
     const routedPath = mainWorkspaceAliasPath || normalizedPath;
-    const rootPath =
-      mainWorkspaceAliasPath !== null
-        ? MAIN_WORKSPACE_FS_ROOT
-        : selectFsRootForPath(routedPath);
+    const rootPath = selectFsRootForPath(normalizedPath);
     const relWithinRoot = routedPath.replace(/^\/+/, "");
 
     const resolvedPath = path.resolve(rootPath, relWithinRoot);
