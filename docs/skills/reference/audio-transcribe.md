@@ -116,7 +116,7 @@ Invoke with: /audio_transcribe [audio_url_or_attachment]
 
 ## Examples
 
-- /audio_transcribe https://example.com/meeting-recording.mp3
+- /audio_transcribe <https://example.com/meeting-recording.mp3>
 - /audio_transcribe [attached voice message]
 
 ## Supported Formats

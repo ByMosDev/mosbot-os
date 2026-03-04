@@ -17,7 +17,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Updated org chart documentation to the simplified Agents view and naming
 - OpenClaw docs updated for split-root model and updated path/mount guidance
 
-
 ## [0.1.0] - 2026-03-01
 
 Initial documentation site release. Covers MosBot OS as of mosbot-api `0.1.2` and mosbot-dashboard

@@ -12,7 +12,7 @@ npm install
 npm start
 ```
 
-The docs site will be available at **http://localhost:3000/mosbot-docs/**.
+The docs site will be available at **<http://localhost:3000/mosbot-docs/>**.
 
 ## Branch model (trunk-based)
 

@@ -152,7 +152,7 @@ When invoked, the agent will:
 Why: Critical priority, all dependencies cleared, matches your expertise Estimated: 2 hours Due:
 Tomorrow
 
-### Alternative Options:
+### Alternative Options
 
 2. TASK-790 - Update API documentation (Medium, ~3 hours)
 3. TASK-791 - Refactor user service (Low, ~5 hours)
