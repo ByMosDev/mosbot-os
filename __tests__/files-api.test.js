@@ -21,6 +21,11 @@ describe("Files API", () => {
     await fs.mkdir(path.join(workspaceRoot, "subdir"), { recursive: true });
     await fs.mkdir(path.join(configRoot, "workspace-cto"), { recursive: true });
     await fs.mkdir(path.join(configRoot, "projects"), { recursive: true });
+    await fs.mkdir(path.join(configRoot, "skills"), { recursive: true });
+    await fs.mkdir(path.join(configRoot, "docs"), { recursive: true });
+    await fs.mkdir(path.join(configRoot, "_archived_workspace_main"), {
+      recursive: true,
+    });
 
     await fs.writeFile(path.join(workspaceRoot, "hello.txt"), "hello world");
     await fs.writeFile(
@@ -29,7 +34,14 @@ describe("Files API", () => {
     );
     await fs.writeFile(path.join(configRoot, "workspace-cto", "agent.txt"), "cto");
     await fs.writeFile(path.join(configRoot, "projects", "project.txt"), "project");
+    await fs.writeFile(path.join(configRoot, "skills", "skill.txt"), "skill");
+    await fs.writeFile(path.join(configRoot, "docs", "readme.md"), "docs");
+    await fs.writeFile(
+      path.join(configRoot, "_archived_workspace_main", "archived.txt"),
+      "archived content",
+    );
     await fs.writeFile(path.join(configRoot, "openclaw.json"), '{"models":[]}');
+    await fs.writeFile(path.join(configRoot, "agents.json"), '{"agents":[]}');
 
     app = createApp({
       configRoot,
@@ -44,15 +56,25 @@ describe("Files API", () => {
   });
 
   describe("GET /files", () => {
-    it("lists root directory contents from workspace root", async () => {
+    it("denies root path when path is omitted", async () => {
       const res = await request(app).get("/files");
-      expect(res.status).toBe(200);
-      expect(Array.isArray(res.body.files)).toBe(true);
-      expect(res.body.count).toBeGreaterThanOrEqual(2);
+      expect(res.status).toBe(403);
+      expect(res.body).toEqual({
+        error: "Path not allowed",
+        code: "PATH_NOT_ALLOWED",
+        path: "/",
+      });
+    });
+
+    it("denies explicit root path", async () => {
+      const res = await request(app).get("/files?path=/");
+      expect(res.status).toBe(403);
+      expect(res.body.code).toBe("PATH_NOT_ALLOWED");
+      expect(res.body.path).toBe("/");
     });
 
     it("lists a specific workspace subdirectory", async () => {
-      const res = await request(app).get("/files?path=/subdir");
+      const res = await request(app).get("/files?path=/workspace/subdir");
       expect(res.status).toBe(200);
       expect(res.body.files.some((f) => f.name === "nested.txt")).toBe(true);
     });
@@ -81,6 +103,24 @@ describe("Files API", () => {
       expect(res.body.files.some((f) => f.name === "project.txt")).toBe(true);
     });
 
+    it("routes /skills paths to config root", async () => {
+      const res = await request(app).get("/files?path=/skills");
+      expect(res.status).toBe(200);
+      expect(res.body.files.some((f) => f.name === "skill.txt")).toBe(true);
+    });
+
+    it("routes /docs paths to config root", async () => {
+      const res = await request(app).get("/files?path=/docs");
+      expect(res.status).toBe(200);
+      expect(res.body.files.some((f) => f.name === "readme.md")).toBe(true);
+    });
+
+    it("routes /_archived_workspace_main paths to config root", async () => {
+      const res = await request(app).get("/files?path=/_archived_workspace_main");
+      expect(res.status).toBe(200);
+      expect(res.body.files.some((f) => f.name === "archived.txt")).toBe(true);
+    });
+
     it("returns config file info from config root", async () => {
       const res = await request(app).get("/files?path=/openclaw.json");
       expect(res.status).toBe(200);
@@ -88,28 +128,57 @@ describe("Files API", () => {
       expect(res.body.files[0].name).toBe("openclaw.json");
     });
 
+    it("returns agents config file info from config root", async () => {
+      const res = await request(app).get("/files?path=/agents.json");
+      expect(res.status).toBe(200);
+      expect(res.body.files).toHaveLength(1);
+      expect(res.body.files[0].name).toBe("agents.json");
+    });
+
     it("lists recursively when recursive=true", async () => {
-      const res = await request(app).get("/files?recursive=true");
+      const res = await request(app).get("/files?path=/workspace&recursive=true");
       expect(res.status).toBe(200);
       const names = res.body.files.map((f) => f.name);
       expect(names).toContain("nested.txt");
     });
 
     it("returns 404 for a non-existent path", async () => {
-      const res = await request(app).get("/files?path=/does-not-exist.txt");
+      const res = await request(app).get("/files?path=/workspace/does-not-exist.txt");
       expect(res.status).toBe(404);
       expect(res.body.error).toBe("Path not found");
     });
 
-    it("normalises traversal sequences safely within selected root", async () => {
-      const res = await request(app).get("/files?path=/../../../etc/passwd");
-      expect(res.status).toBe(404);
+    it("denies non-allowlisted paths", async () => {
+      const res = await request(app).get("/files?path=/foo");
+      expect(res.status).toBe(403);
+      expect(res.body.code).toBe("PATH_NOT_ALLOWED");
+      expect(res.body.path).toBe("/foo");
+    });
+
+    it("rejects disallowed paths before filesystem calls", async () => {
+      const fsModule = require("fs").promises;
+      const statSpy = jest.spyOn(fsModule, "stat");
+
+      const res = await request(app).get("/files?path=/tmp");
+
+      expect(res.status).toBe(403);
+      expect(res.body.code).toBe("PATH_NOT_ALLOWED");
+      expect(statSpy).not.toHaveBeenCalled();
+
+      statSpy.mockRestore();
+    });
+
+    it("denies traversal-style paths after normalization", async () => {
+      const res = await request(app).get("/files?path=/workspace/../../../etc/passwd");
+      expect(res.status).toBe(403);
+      expect(res.body.code).toBe("PATH_NOT_ALLOWED");
+      expect(res.body.path).toBe("/etc/passwd");
     });
   });
 
   describe("GET /files/content", () => {
     it("returns workspace file content", async () => {
-      const res = await request(app).get("/files/content?path=/hello.txt");
+      const res = await request(app).get("/files/content?path=/workspace/hello.txt");
       expect(res.status).toBe(200);
       expect(res.body.content).toBe("hello world");
       expect(res.body.encoding).toBe("utf8");
@@ -121,10 +190,24 @@ describe("Files API", () => {
       expect(res.body.content).toContain("models");
     });
 
+    it("returns agents config content from config root", async () => {
+      const res = await request(app).get("/files/content?path=/agents.json");
+      expect(res.status).toBe(200);
+      expect(res.body.content).toContain("agents");
+    });
+
     it("returns content for /workspace/* paths from main workspace root", async () => {
       const res = await request(app).get("/files/content?path=/workspace/hello.txt");
       expect(res.status).toBe(200);
       expect(res.body.content).toBe("hello world");
+    });
+
+    it("returns content for archived workspace files from config root", async () => {
+      const res = await request(app).get(
+        "/files/content?path=/_archived_workspace_main/archived.txt",
+      );
+      expect(res.status).toBe(200);
+      expect(res.body.content).toBe("archived content");
     });
 
     it("returns 400 when path parameter is missing", async () => {
@@ -134,22 +217,29 @@ describe("Files API", () => {
     });
 
     it("returns 400 when path is a directory", async () => {
-      const res = await request(app).get("/files/content?path=/subdir");
+      const res = await request(app).get("/files/content?path=/workspace/subdir");
       expect(res.status).toBe(400);
       expect(res.body.error).toBe("Cannot read directory as file");
     });
 
     it("returns 404 for a non-existent file", async () => {
-      const res = await request(app).get("/files/content?path=/missing.txt");
+      const res = await request(app).get("/files/content?path=/workspace/missing.txt");
       expect(res.status).toBe(404);
       expect(res.body.error).toBe("File not found");
+    });
+
+    it("returns 403 for disallowed content path", async () => {
+      const res = await request(app).get("/files/content?path=/tmp/secret.txt");
+      expect(res.status).toBe(403);
+      expect(res.body.code).toBe("PATH_NOT_ALLOWED");
+      expect(res.body.path).toBe("/tmp/secret.txt");
     });
   });
 
   describe("POST /files", () => {
     it("creates a new workspace file and returns 201", async () => {
       const res = await request(app).post("/files").send({
-        path: "/created.txt",
+        path: "/workspace/created.txt",
         content: "created content",
       });
       expect(res.status).toBe(201);
@@ -162,7 +252,7 @@ describe("Files API", () => {
 
     it("creates parent directories in workspace root", async () => {
       const res = await request(app).post("/files").send({
-        path: "/deep/nested/file.txt",
+        path: "/workspace/deep/nested/file.txt",
         content: "deep content",
       });
       expect(res.status).toBe(201);
@@ -174,14 +264,14 @@ describe("Files API", () => {
       expect(actual).toBe("deep content");
     });
 
-    it("creates config file under config root", async () => {
+    it("creates agents config file under config root", async () => {
       const res = await request(app).post("/files").send({
-        path: "/org-chart.json",
+        path: "/agents.json",
         content: '{"version":1}',
       });
       expect(res.status).toBe(201);
 
-      const actual = await fs.readFile(path.join(configRoot, "org-chart.json"), "utf8");
+      const actual = await fs.readFile(path.join(configRoot, "agents.json"), "utf8");
       expect(actual).toContain("version");
     });
 
@@ -196,17 +286,27 @@ describe("Files API", () => {
       expect(res.status).toBe(400);
       expect(res.body.error).toBe("Path and content are required");
     });
+
+    it("returns 403 for disallowed create path", async () => {
+      const res = await request(app).post("/files").send({
+        path: "/tmp/new-file.txt",
+        content: "blocked",
+      });
+      expect(res.status).toBe(403);
+      expect(res.body.code).toBe("PATH_NOT_ALLOWED");
+      expect(res.body.path).toBe("/tmp/new-file.txt");
+    });
   });
 
   describe("PUT /files", () => {
     beforeAll(async () => {
       await fs.writeFile(path.join(workspaceRoot, "updatable.txt"), "original");
-      await fs.writeFile(path.join(configRoot, "org-chart.json"), '{"version":1}');
+      await fs.writeFile(path.join(configRoot, "agents.json"), '{"version":1}');
     });
 
     it("updates an existing workspace file and returns 200", async () => {
       const res = await request(app).put("/files").send({
-        path: "/updatable.txt",
+        path: "/workspace/updatable.txt",
         content: "updated content",
       });
       expect(res.status).toBe(200);
@@ -218,18 +318,18 @@ describe("Files API", () => {
 
     it("updates an existing config file and returns 200", async () => {
       const res = await request(app).put("/files").send({
-        path: "/org-chart.json",
+        path: "/agents.json",
         content: '{"version":2}',
       });
       expect(res.status).toBe(200);
 
-      const actual = await fs.readFile(path.join(configRoot, "org-chart.json"), "utf8");
+      const actual = await fs.readFile(path.join(configRoot, "agents.json"), "utf8");
       expect(actual).toContain('"version":2');
     });
 
     it("returns 404 when file does not exist", async () => {
       const res = await request(app).put("/files").send({
-        path: "/nonexistent.txt",
+        path: "/workspace/nonexistent.txt",
         content: "x",
       });
       expect(res.status).toBe(404);
@@ -247,12 +347,22 @@ describe("Files API", () => {
       expect(res.status).toBe(400);
       expect(res.body.error).toBe("Path and content are required");
     });
+
+    it("returns 403 for disallowed update path", async () => {
+      const res = await request(app).put("/files").send({
+        path: "/tmp/agents.json",
+        content: "{}",
+      });
+      expect(res.status).toBe(403);
+      expect(res.body.code).toBe("PATH_NOT_ALLOWED");
+      expect(res.body.path).toBe("/tmp/agents.json");
+    });
   });
 
   describe("DELETE /files", () => {
     it("deletes a workspace file and returns 204", async () => {
       await fs.writeFile(path.join(workspaceRoot, "to-delete.txt"), "bye");
-      const res = await request(app).delete("/files?path=/to-delete.txt");
+      const res = await request(app).delete("/files?path=/workspace/to-delete.txt");
       expect(res.status).toBe(204);
 
       await expect(
@@ -263,16 +373,16 @@ describe("Files API", () => {
     it("deletes a workspace directory recursively and returns 204", async () => {
       await fs.mkdir(path.join(workspaceRoot, "dir-to-delete"), { recursive: true });
       await fs.writeFile(path.join(workspaceRoot, "dir-to-delete", "file.txt"), "x");
-      const res = await request(app).delete("/files?path=/dir-to-delete");
+      const res = await request(app).delete("/files?path=/workspace/dir-to-delete");
       expect(res.status).toBe(204);
     });
 
     it("deletes a config file and returns 204", async () => {
-      await fs.writeFile(path.join(configRoot, "org-chart.json"), '{"version":2}');
-      const res = await request(app).delete("/files?path=/org-chart.json");
+      await fs.writeFile(path.join(configRoot, "agents.json"), '{"version":2}');
+      const res = await request(app).delete("/files?path=/agents.json");
       expect(res.status).toBe(204);
 
-      await expect(fs.access(path.join(configRoot, "org-chart.json"))).rejects.toThrow();
+      await expect(fs.access(path.join(configRoot, "agents.json"))).rejects.toThrow();
     });
 
     it("returns 400 when path parameter is missing", async () => {
@@ -282,9 +392,16 @@ describe("Files API", () => {
     });
 
     it("returns 404 for a non-existent path", async () => {
-      const res = await request(app).delete("/files?path=/missing.txt");
+      const res = await request(app).delete("/files?path=/workspace/missing.txt");
       expect(res.status).toBe(404);
       expect(res.body.error).toBe("Path not found");
+    });
+
+    it("returns 403 for disallowed delete path", async () => {
+      const res = await request(app).delete("/files?path=/tmp/secret.txt");
+      expect(res.status).toBe(403);
+      expect(res.body.code).toBe("PATH_NOT_ALLOWED");
+      expect(res.body.path).toBe("/tmp/secret.txt");
     });
   });
 
@@ -295,7 +412,7 @@ describe("Files API", () => {
       const boom = new Error("unexpected readdir error");
       fsModule.readdir = jest.fn().mockRejectedValueOnce(boom);
 
-      const res = await request(app).get("/files");
+      const res = await request(app).get("/files?path=/workspace");
 
       fsModule.readdir = originalReaddir;
 
@@ -309,7 +426,7 @@ describe("Files API", () => {
       const boom = new Error();
       fsModule.readdir = jest.fn().mockRejectedValueOnce(boom);
 
-      const res = await request(app).get("/files");
+      const res = await request(app).get("/files?path=/workspace");
 
       fsModule.readdir = originalReaddir;
 
@@ -323,7 +440,7 @@ describe("Files API", () => {
       const boom = new Error("unexpected readFile error");
       fsModule.readFile = jest.fn().mockRejectedValueOnce(boom);
 
-      const res = await request(app).get("/files/content?path=/hello.txt");
+      const res = await request(app).get("/files/content?path=/workspace/hello.txt");
 
       fsModule.readFile = originalReadFile;
 
@@ -338,7 +455,7 @@ describe("Files API", () => {
       fsModule.mkdir = jest.fn().mockRejectedValueOnce(boom);
 
       const res = await request(app).post("/files").send({
-        path: "/new-file.txt",
+        path: "/workspace/new-file.txt",
         content: "content",
       });
 
@@ -355,7 +472,7 @@ describe("Files API", () => {
       fsModule.writeFile = jest.fn().mockRejectedValueOnce(boom);
 
       const res = await request(app).put("/files").send({
-        path: "/updatable.txt",
+        path: "/workspace/updatable.txt",
         content: "content",
       });
 
@@ -372,7 +489,7 @@ describe("Files API", () => {
       boom.code = "EACCES";
       fsModule.stat = jest.fn().mockRejectedValueOnce(boom);
 
-      const res = await request(app).delete("/files?path=/hello.txt");
+      const res = await request(app).delete("/files?path=/workspace/hello.txt");
 
       fsModule.stat = originalStat;
 

@@ -86,8 +86,12 @@ Given `CONFIG_ROOT=/openclaw-config` and `MAIN_WORKSPACE_DIR=workspace`:
 
 Routing rules:
 
-- Config-root paths: `/openclaw.json`, `/org-chart.json`, `/projects/**`, `/skills/**`, `/docs/**`, `/workspace-<agent>/**`
 - Main workspace canonical paths: `/workspace` and `/workspace/**` (mapped to `CONFIG_ROOT/MAIN_WORKSPACE_DIR`)
+- Config-root allowlist:
+  `/openclaw.json`, `/agents.json`, `/projects/**`, `/skills/**`, `/docs/**`,
+  `/workspace-<agent>/**`, and legacy archive paths such as `/_archived_workspace_main/**`
+- All other absolute paths are denied with `403` and code `PATH_NOT_ALLOWED`
+- Virtual root `/` is not allowlisted and is denied with `403 PATH_NOT_ALLOWED`
 
 Canonical main workspace virtual path is `/workspace`.
 
@@ -118,6 +122,7 @@ Authorization: Bearer <token>
 ```
 
 List files and directories. Use `recursive=true` for recursive listing.
+`path=/` (or omitted `path`) is denied with `403 PATH_NOT_ALLOWED`.
 
 ### Get File Content
 
