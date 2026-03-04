@@ -14,6 +14,14 @@ const ALLOWED_CONFIG_PREFIXES = [
 const WORKSPACE_AGENT_PATH_PATTERN = /^\/workspace-[^/]+(?:\/.*)?$/;
 const PATH_NOT_ALLOWED_CODE = "PATH_NOT_ALLOWED";
 
+function buildPathNotAllowedErrorPayload(err) {
+  return {
+    error: err?.message || "Path not allowed",
+    code: PATH_NOT_ALLOWED_CODE,
+    path: err?.normalizedPath || null,
+  };
+}
+
 /**
  * Build and return an Express app configured with the given options.
  *
@@ -532,11 +540,7 @@ function createApp(opts) {
   // eslint-disable-next-line no-unused-vars
   app.use((err, req, res, next) => {
     if (err.code === PATH_NOT_ALLOWED_CODE) {
-      return res.status(403).json({
-        error: err.message || "Path not allowed",
-        code: PATH_NOT_ALLOWED_CODE,
-        path: err.normalizedPath || null,
-      });
+      return res.status(403).json(buildPathNotAllowedErrorPayload(err));
     }
 
     console.error("Error:", err);
@@ -568,4 +572,4 @@ function createApp(opts) {
   return app;
 }
 
-module.exports = { createApp };
+module.exports = { createApp, buildPathNotAllowedErrorPayload };
