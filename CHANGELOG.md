@@ -16,12 +16,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Renamed Org Chart page to Agents
+- Simplified Agents view to remove corporate defaults and focus on single-agent display
 - Message rendering now handles both string and array content formats (blocks-based messages)
 - Tool calls are now displayed alongside message content in session detail view
 - Improved handling of assistant messages with no content or tool calls (skips empty messages)
 - CI workflow updated to include test execution step
 - Vite config updated to support test environment
 - `.gitignore` updated to exclude additional generated files
+- Documentation references updated to align with new Agents naming
+
+### Security
+
+- Switched Gitleaks license key to an organization secret
 
 ## [0.1.4] - 2026-03-02
 
