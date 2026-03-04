@@ -17,14 +17,14 @@ Lightweight HTTP service that exposes OpenClaw workspace files over REST API. Th
 
 ## Security
 
-> **This service can read, write, and delete files on the mounted workspace volume. Treat it as a privileged internal API.**
+> **This service can read, write, and delete files under the mounted OpenClaw root. Treat it as a privileged internal API.**
 
 - **Authentication is required** — `WORKSPACE_SERVICE_TOKEN` must be set. The service will refuse to start without it.
 - **Never expose port 8080 to the public internet** — use a VPN, private network, or Kubernetes `ClusterIP` service.
 - Always use a strong, randomly generated bearer token (`openssl rand -hex 32`).
 - The service runs as a non-root user inside the container.
 - Path traversal protection is built-in and cannot be bypassed via the API.
-- Mount workspace volumes as read-only (`:ro`) when write access is not required.
+- For normal MosBot usage, mount the OpenClaw root read-write so Projects/Skills/Docs and config edits can succeed.
 
 See [SECURITY.md](SECURITY.md) for the full threat model and vulnerability reporting process.
 
@@ -38,9 +38,10 @@ services:
     image: ghcr.io/bymosbot/mosbot-workspace-service:latest
     environment:
       WORKSPACE_SERVICE_TOKEN: your-secure-token # required
-      WORKSPACE_ROOT: /workspace
+      CONFIG_ROOT: /openclaw-config
+      MAIN_WORKSPACE_DIR: workspace
     volumes:
-      - openclaw-workspace:/workspace:ro
+      - /path/to/.openclaw:/openclaw-config
     ports:
       - "8080:8080"
 ```
@@ -51,27 +52,44 @@ services:
 docker run -d \
   --name mosbot-workspace \
   -e WORKSPACE_SERVICE_TOKEN=your-secure-token \
-  -e WORKSPACE_ROOT=/workspace \
-  -v /path/to/openclaw/workspace:/workspace:ro \
+  -e CONFIG_ROOT=/openclaw-config \
+  -e MAIN_WORKSPACE_DIR=workspace \
+  -v /path/to/.openclaw:/openclaw-config \
   -p 8080:8080 \
   ghcr.io/bymosbot/mosbot-workspace-service:latest
 ```
+
+For full MosBot integration (agent discovery via `openclaw.json` + Projects/Skills/Docs CRUD), use
+a read-write mount for `CONFIG_ROOT`.
 
 ## Environment Variables
 
 | Variable                            | Default                | Description                                                                                         |
 | ----------------------------------- | ---------------------- | --------------------------------------------------------------------------------------------------- |
 | `PORT`                              | `8080`                 | HTTP server port                                                                                    |
-| `WORKSPACE_ROOT`                    | `/workspace`           | Root directory where workspace is mounted                                                           |
-| `WORKSPACE_SUBDIR`                  | `workspace`            | Subdirectory within `WORKSPACE_ROOT` to expose (prevents browsing the entire filesystem)            |
+| `CONFIG_ROOT`                       | `/openclaw-config`     | Absolute OpenClaw root mount containing config, shared dirs, and agent workspaces                   |
+| `MAIN_WORKSPACE_DIR`                | `workspace`            | Main workspace directory name under `CONFIG_ROOT` (single folder name only; no `/`, `\`, `.`, `..`) |
 | `WORKSPACE_SERVICE_TOKEN`           | —                      | **Required.** Bearer token for authentication. The service will not start without this.             |
 | `SYMLINK_REMAP_PREFIXES`            | `/home/node/.openclaw` | Comma-separated list of symlink prefixes to remap (for cross-container symlinks)                    |
 | `WORKSPACE_SERVICE_ALLOW_ANONYMOUS` | —                      | Set to `true` to disable auth requirement. **For local development only. Never use in production.** |
 
-> **Deprecated aliases** (still accepted for backward compatibility):
->
-> - `WORKSPACE_PATH` → use `WORKSPACE_ROOT` instead
-> - `AUTH_TOKEN` → use `WORKSPACE_SERVICE_TOKEN` instead
+Removed and no longer honored: `WORKSPACE_FS_ROOT`, `CONFIG_FS_ROOT`, `WORKSPACE_ROOT`,
+`WORKSPACE_SUBDIR`, `WORKSPACE_PATH`, `AUTH_TOKEN`.
+
+## Filesystem and Virtual Path Contract
+
+Given `CONFIG_ROOT=/openclaw-config` and `MAIN_WORKSPACE_DIR=workspace`:
+
+- Main workspace filesystem root: `/openclaw-config/workspace`
+- Sub-agent workspaces: `/openclaw-config/workspace-<agent>`
+- Shared directories: `/openclaw-config/projects`, `/openclaw-config/skills`, `/openclaw-config/docs`
+
+Routing rules:
+
+- Config-root paths: `/openclaw.json`, `/org-chart.json`, `/projects/**`, `/skills/**`, `/docs/**`, `/workspace-<agent>/**`
+- Main workspace canonical paths: `/workspace` and `/workspace/**` (mapped to `CONFIG_ROOT/MAIN_WORKSPACE_DIR`)
+
+Canonical main workspace virtual path is `/workspace`.
 
 ## API Endpoints
 
@@ -95,7 +113,7 @@ Returns workspace accessibility status.
 ### List Files
 
 ```bash
-GET /files?path=/&recursive=false
+GET /files?path=/workspace&recursive=false
 Authorization: Bearer <token>
 ```
 

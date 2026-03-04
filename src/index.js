@@ -1,19 +1,17 @@
 "use strict";
 
 require("dotenv").config();
+const path = require("path");
 
 const { createApp } = require("./app");
 
 const PORT = process.env.PORT || 8080;
 
-const WORKSPACE_ROOT =
-  process.env.WORKSPACE_ROOT || process.env.WORKSPACE_PATH || "/workspace";
+const CONFIG_ROOT = process.env.CONFIG_ROOT || "/openclaw-config";
+const MAIN_WORKSPACE_DIR = (process.env.MAIN_WORKSPACE_DIR || "workspace").trim();
+const MAIN_WORKSPACE_FS_ROOT = path.resolve(CONFIG_ROOT, MAIN_WORKSPACE_DIR);
 
-const WORKSPACE_SUBDIR =
-  process.env.WORKSPACE_SUBDIR === undefined ? "workspace" : process.env.WORKSPACE_SUBDIR;
-
-const WORKSPACE_SERVICE_TOKEN =
-  process.env.WORKSPACE_SERVICE_TOKEN || process.env.AUTH_TOKEN;
+const WORKSPACE_SERVICE_TOKEN = process.env.WORKSPACE_SERVICE_TOKEN;
 
 const ALLOW_ANONYMOUS = process.env.WORKSPACE_SERVICE_ALLOW_ANONYMOUS === "true";
 
@@ -23,6 +21,11 @@ const SYMLINK_REMAP_PREFIXES = (
   .split(",")
   .map((p) => p.trim())
   .filter(Boolean);
+
+function isValidMainWorkspaceDir(value) {
+  if (!value || value === "." || value === "..") return false;
+  return !value.includes("/") && !value.includes("\\");
+}
 
 // Enforce auth required unless explicitly opted out for local dev
 if (!WORKSPACE_SERVICE_TOKEN && !ALLOW_ANONYMOUS) {
@@ -34,30 +37,30 @@ if (!WORKSPACE_SERVICE_TOKEN && !ALLOW_ANONYMOUS) {
   process.exit(1);
 }
 
+if (!isValidMainWorkspaceDir(MAIN_WORKSPACE_DIR)) {
+  console.error(
+    "ERROR: MAIN_WORKSPACE_DIR must be a single directory name (no slashes, '\\\\', '.' or '..').",
+  );
+  process.exit(1);
+}
+
 const app = createApp({
-  workspaceRoot: WORKSPACE_ROOT,
-  workspaceSubdir: WORKSPACE_SUBDIR,
+  configRoot: CONFIG_ROOT,
+  mainWorkspaceDir: MAIN_WORKSPACE_DIR,
   token: WORKSPACE_SERVICE_TOKEN,
   symlinkRemapPrefixes: SYMLINK_REMAP_PREFIXES,
 });
 
 app.listen(PORT, () => {
   console.log(`MosBot Workspace Service running on port ${PORT}`);
-  console.log(`Workspace root: ${WORKSPACE_ROOT}`);
-  console.log(`Exposed root: ${app._exposedRoot} (subdir: ${WORKSPACE_SUBDIR || "."})`);
+  console.log(`Config root: ${CONFIG_ROOT}`);
+  console.log(`Main workspace dir: ${MAIN_WORKSPACE_DIR}`);
+  console.log(`Main workspace FS root: ${MAIN_WORKSPACE_FS_ROOT}`);
   console.log(
     `Auth: ${WORKSPACE_SERVICE_TOKEN ? "enabled" : "disabled (WORKSPACE_SERVICE_ALLOW_ANONYMOUS=true)"}`,
   );
   console.log(`Health check: http://localhost:${PORT}/health`);
 
-  if (process.env.WORKSPACE_PATH && !process.env.WORKSPACE_ROOT) {
-    console.warn("WARNING: Using deprecated WORKSPACE_PATH — rename to WORKSPACE_ROOT");
-  }
-  if (process.env.AUTH_TOKEN && !process.env.WORKSPACE_SERVICE_TOKEN) {
-    console.warn(
-      "WARNING: Using deprecated AUTH_TOKEN — rename to WORKSPACE_SERVICE_TOKEN",
-    );
-  }
   if (ALLOW_ANONYMOUS) {
     console.warn(
       "WARNING: WORKSPACE_SERVICE_ALLOW_ANONYMOUS=true — authentication is disabled. Do not use in production.",

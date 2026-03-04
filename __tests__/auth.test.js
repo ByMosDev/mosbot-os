@@ -8,14 +8,20 @@ const { createApp } = require("../src/app");
 
 describe("Authentication middleware", () => {
   let tmpDir;
+  let workspaceRoot;
+  let configRoot;
   let app;
   const TOKEN = "test-token-abc123";
 
   beforeAll(async () => {
     tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "ws-auth-test-"));
-    // Create a minimal workspace structure
-    await fs.mkdir(path.join(tmpDir, "workspace"), { recursive: true });
-    await fs.writeFile(path.join(tmpDir, "workspace", "hello.txt"), "hello");
+    configRoot = path.join(tmpDir, "config-root");
+    workspaceRoot = path.join(configRoot, "workspace");
+
+    await fs.mkdir(configRoot, { recursive: true });
+    await fs.mkdir(workspaceRoot, { recursive: true });
+    await fs.writeFile(path.join(workspaceRoot, "hello.txt"), "hello");
+    await fs.writeFile(path.join(configRoot, "openclaw.json"), "{}");
   });
 
   afterAll(async () => {
@@ -25,8 +31,8 @@ describe("Authentication middleware", () => {
   describe("when token is configured", () => {
     beforeAll(() => {
       app = createApp({
-        workspaceRoot: tmpDir,
-        workspaceSubdir: "workspace",
+        configRoot,
+        mainWorkspaceDir: "workspace",
         token: TOKEN,
         symlinkRemapPrefixes: [],
       });
@@ -68,8 +74,8 @@ describe("Authentication middleware", () => {
   describe("when no token is configured (anonymous mode)", () => {
     beforeAll(() => {
       app = createApp({
-        workspaceRoot: tmpDir,
-        workspaceSubdir: "workspace",
+        configRoot,
+        mainWorkspaceDir: "workspace",
         token: undefined,
         symlinkRemapPrefixes: [],
       });
