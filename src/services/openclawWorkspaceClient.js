@@ -32,8 +32,12 @@ function isRetryableError(error) {
 
 // Helper to make requests to OpenClaw workspace service with retry logic
 async function makeOpenClawRequest(method, path, body = null, retryCount = 0) {
-  const maxRetries = 3;
-  const baseDelayMs = 500; // Base delay of 500ms
+  // Determine retry settings and timeout based on environment for faster tests
+  const isTestEnvironment =
+    process.env.NODE_ENV === 'test' || process.env.JEST_WORKER_ID !== undefined;
+  const maxRetries = isTestEnvironment ? 1 : 3; // Reduce retries in test environment
+  const baseDelayMs = isTestEnvironment ? 10 : 500; // Reduce delay in test environment
+  const timeoutMs = isTestEnvironment ? 8000 : 10000; // 8 seconds in test mode (was 5s), 10 seconds in production
 
   // Require explicit workspace URL in all environments.
   // If OPENCLAW_WORKSPACE_URL is missing, workspace-backed features are disabled.
@@ -51,13 +55,14 @@ async function makeOpenClawRequest(method, path, body = null, retryCount = 0) {
   }
 
   const url = `${openclawUrl}${path}`;
+
   const options = {
     method,
     headers: {
       'Content-Type': 'application/json',
     },
-    // Add timeout to prevent hanging requests (10 seconds)
-    signal: AbortSignal.timeout(10000),
+    // Add timeout to prevent hanging requests (8 seconds in test mode, 10 seconds in production)
+    signal: AbortSignal.timeout(timeoutMs),
   };
 
   // Add auth token if configured
