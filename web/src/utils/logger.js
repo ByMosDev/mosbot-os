@@ -5,6 +5,8 @@
  * with external logging services (e.g., Sentry, LogRocket, etc.)
  */
 
+import { config } from '../config';
+
 const LOG_LEVELS = {
   DEBUG: 0,
   INFO: 1,
@@ -19,7 +21,7 @@ const currentLogLevel = import.meta.env.DEV ? LOG_LEVELS.DEBUG : LOG_LEVELS.INFO
  * Exported for testing purposes
  */
 export const getEnvironmentInfo = () => {
-  if (import.meta.env.VITE_API_URL) {
+  if (config.apiUrl) {
     return import.meta.env.MODE || 'development';
   }
   return null;

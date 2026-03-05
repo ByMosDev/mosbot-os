@@ -1,0 +1,17 @@
+/**
+ * Runtime configuration.
+ *
+ * In production, values are injected into window.__RUNTIME_CONFIG__ by
+ * docker-entrypoint.sh at container startup. In development, they fall
+ * through to import.meta.env (Vite dev server).
+ */
+
+const runtimeConfig = window.__RUNTIME_CONFIG__ || {};
+
+// Helper: use runtime value if non-empty, else fall back to Vite env / default.
+const get = (key, fallback) => runtimeConfig[key] || import.meta.env[key] || fallback;
+
+export const config = {
+  apiUrl: get('VITE_API_URL', 'http://localhost:3000/api/v1'),
+  appName: get('VITE_APP_NAME', 'MosBot'),
+};
