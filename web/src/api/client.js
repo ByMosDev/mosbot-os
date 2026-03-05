@@ -1,7 +1,8 @@
 import axios from 'axios';
+import { config } from '../runtimeConfig';
 import logger from '../utils/logger';
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000/api/v1';
+const API_URL = config.apiUrl;
 
 // Retry configuration
 const MAX_RETRIES = 3;
