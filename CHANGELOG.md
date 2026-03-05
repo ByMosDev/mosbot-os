@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Default port changed from `8080` to `18780` — update any hardcoded references in `.env`, Docker port mappings, and `kubectl port-forward` commands
 - Docker publish workflow hardened for multi-platform builds and SHA prefix handling
 - Documentation clarified for read/write mounts and `MAIN_WORKSPACE_DIR` behavior
 - Path routing now combines strict split-root with explicit config-root allowlist:
