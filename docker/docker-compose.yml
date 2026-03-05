@@ -1,5 +1,5 @@
 # Full-stack test harness for MosBot + OpenClaw integration testing.
-# Run from ./docker/: make setup && make up
+# Run from repo root: make harness.setup && make harness.up
 #
 # This is NOT the production compose — it is for local development and testing only.
 # All services run in development mode with hot-reload where applicable.
