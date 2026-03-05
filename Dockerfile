@@ -1,7 +1,7 @@
 # MosBot Dashboard — multi-stage build
 
 # Stage 0: dev server with HMR (used by docker compose --profile dev)
-FROM node:20-alpine AS development
+FROM node:25-alpine3.22 AS development
 
 WORKDIR /app
 
@@ -15,7 +15,7 @@ CMD ["npm", "run", "dev", "--", "--host", "0.0.0.0"]
 
 # Stage 1: build the Vite app
 # Use BUILDPLATFORM to avoid QEMU emulation issues - JS builds are platform-agnostic
-FROM --platform=$BUILDPLATFORM node:20-alpine AS build
+FROM --platform=$BUILDPLATFORM node:25-alpine3.22 AS build
 
 WORKDIR /app
 
