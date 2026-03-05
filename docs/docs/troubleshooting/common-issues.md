@@ -128,7 +128,7 @@ issues.
 
 1. Check API logs: `docker compose logs api | grep migration`
 2. Run migrations manually: `docker compose exec api npm run migrate`
-3. If the database is corrupted (dev only): `make db-reset` (destructive)
+3. If the database is corrupted (dev only): `make api.db-reset` (destructive)
 
 ---
 
