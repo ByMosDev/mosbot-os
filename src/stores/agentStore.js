@@ -133,7 +133,15 @@ export const useAgentStore = create((set, get) => ({
 
       return finalAgents;
     } catch (error) {
-      logger.error('Failed to fetch agents, using fallback', error);
+      const status = error?.response?.status;
+      if (status === 401 || status === 403) {
+        logger.warn('Failed to fetch agents due to authorization, using fallback', {
+          status,
+          message: error?.message,
+        });
+      } else {
+        logger.error('Failed to fetch agents, using fallback', error);
+      }
 
       set({
         agents: fallbackAgents,

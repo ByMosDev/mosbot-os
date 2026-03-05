@@ -27,21 +27,22 @@ import { useAgentStore } from './stores/agentStore';
 
 function App() {
   const initialize = useAuthStore((state) => state.initialize);
-  const isInitialized = useAuthStore((state) => state.isInitialized);
+  const isAuthInitialized = useAuthStore((state) => state.isInitialized);
+  const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
   const { fetchAgents, getDefaultAgent, agents } = useAgentStore();
 
   useEffect(() => {
-    if (!isInitialized) {
+    if (!isAuthInitialized) {
       initialize();
     }
-  }, [initialize, isInitialized]);
+  }, [initialize, isAuthInitialized]);
 
   // Fetch agents on mount for auto-discovery
   useEffect(() => {
-    if (agents.length === 0) {
+    if (isAuthInitialized && isAuthenticated && agents.length === 0) {
       fetchAgents();
     }
-  }, [agents.length, fetchAgents]);
+  }, [isAuthInitialized, isAuthenticated, agents.length, fetchAgents]);
 
   return (
     <ErrorBoundary>
