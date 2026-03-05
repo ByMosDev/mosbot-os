@@ -46,6 +46,7 @@ coverage/
 dist/
 build/
 .docusaurus/
+.vite/
 
 # Docker and local runtime
 postgres_data/

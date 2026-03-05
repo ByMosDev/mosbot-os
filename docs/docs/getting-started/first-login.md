@@ -27,13 +27,7 @@ logged in successfully:
    # BOOTSTRAP_OWNER_PASSWORD=  # removed after first login
    ```
 
-3. Restart the API:
-
-   ```bash
-   cd mosbot
-   docker compose restart api
-   # or: make restart (if available)
-   ```
+3. Restart the API
 
 This prevents the bootstrap password from being used to reset or recreate the owner account.
 
