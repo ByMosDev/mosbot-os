@@ -59,3 +59,4 @@ docker/openclaw-config/*
 # Claude/Cursor local overrides
 .claude/settings.local.json
 .claude/projects/
+.claude/worktrees/
