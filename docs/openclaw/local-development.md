@@ -43,7 +43,7 @@ Open two terminal windows and run one port-forward in each:
 
 ```bash
 # Terminal 1: Workspace service
-kubectl port-forward -n openclaw-personal svc/openclaw-workspace 8080:8080
+kubectl port-forward -n openclaw-personal svc/openclaw-workspace 18780:18780
 
 # Terminal 2: Gateway service (if used)
 kubectl port-forward -n openclaw-personal svc/openclaw 18789:18789
@@ -56,7 +56,7 @@ Keep both terminals open while developing. If a port-forward drops, restart it.
 ### If running MosBot API natively (on your host)
 
 ```bash
-OPENCLAW_WORKSPACE_URL=http://localhost:8080
+OPENCLAW_WORKSPACE_URL=http://localhost:18780
 OPENCLAW_WORKSPACE_TOKEN=<workspace-token-from-step-1>
 OPENCLAW_GATEWAY_URL=http://localhost:18789
 OPENCLAW_GATEWAY_TOKEN=<gateway-token-from-step-1>
@@ -67,7 +67,7 @@ OPENCLAW_GATEWAY_TOKEN=<gateway-token-from-step-1>
 Use `host.docker.internal` to reach the port-forwarded services from inside the container:
 
 ```bash
-OPENCLAW_WORKSPACE_URL=http://host.docker.internal:8080
+OPENCLAW_WORKSPACE_URL=http://host.docker.internal:18780
 OPENCLAW_WORKSPACE_TOKEN=<workspace-token-from-step-1>
 OPENCLAW_GATEWAY_URL=http://host.docker.internal:18789
 OPENCLAW_GATEWAY_TOKEN=<gateway-token-from-step-1>
@@ -96,7 +96,7 @@ You should see a JSON array of agents from your `openclaw.json`.
 ### Check workspace service directly
 
 ```bash
-curl -H "Authorization: Bearer <workspace-token>" http://localhost:8080/status
+curl -H "Authorization: Bearer <workspace-token>" http://localhost:18780/status
 ```
 
 ### Check workspace via MosBot API

@@ -44,7 +44,7 @@ MosBot API
     │
     │ HTTP (Bearer token auth)
     ▼
-OpenClaw Workspace Service (port 8080)
+OpenClaw Workspace Service (port 18780)
     │
     │ Filesystem access
     ▼
@@ -167,7 +167,7 @@ for direct link writes.
 ```bash
 # Direct check (bypassing MosBot API)
 curl -H "Authorization: Bearer <workspace-token>" \
-  http://localhost:8080/status
+  http://localhost:18780/status
 
 # Via MosBot API (requires MosBot JWT)
 curl -H "Authorization: Bearer <mosbot-jwt>" \

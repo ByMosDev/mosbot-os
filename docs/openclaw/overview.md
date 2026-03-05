@@ -28,7 +28,7 @@ basic task management and user management. With OpenClaw connected, you get:
 
 MosBot API connects to two services alongside OpenClaw:
 
-### Workspace service (port 8080)
+### Workspace service (port 18780)
 
 A lightweight HTTP REST sidecar **provided by MosBot OS** that runs alongside OpenClaw and exposes
 the OpenClaw workspace filesystem over HTTP. It is not part of the standard OpenClaw distribution —
@@ -66,7 +66,7 @@ MosBot API
       │ HTTP               │ HTTP + WebSocket
       ▼                    ▼
 OpenClaw Workspace    OpenClaw Gateway
-Service (port 8080)   (port 18789)
+Service (port 18780)   (port 18789)
       │
       ▼
 Workspace PVC / filesystem

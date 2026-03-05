@@ -5,7 +5,7 @@ sidebar_label: MosBot Required Config
 sidebar_position: 4
 ---
 
-MosBot API connects to OpenClaw via two services: the workspace service (port 8080) and the gateway
+MosBot API connects to OpenClaw via two services: the workspace service (port 18780) and the gateway
 (port 18789). Certain `openclaw.json` settings must be configured correctly for MosBot features to
 work. This page lists the settings that matter most.
 

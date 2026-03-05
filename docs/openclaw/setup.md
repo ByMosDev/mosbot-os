@@ -19,12 +19,12 @@ MosBot API connects to two services:
 
 | Service           | Port  | Provided by             |
 | ----------------- | ----- | ----------------------- |
-| Workspace service | 8080  | **MosBot OS** (sidecar) |
+| Workspace service | 18780 | **MosBot OS** (sidecar) |
 | Gateway           | 18789 | **OpenClaw** (built-in) |
 
 The **gateway** (port 18789) is built into OpenClaw — no extra setup required.
 
-The **workspace service** (port 8080) is a lightweight HTTP sidecar provided by MosBot OS. It runs
+The **workspace service** (port 18780) is a lightweight HTTP sidecar provided by MosBot OS. It runs
 alongside OpenClaw and exposes the OpenClaw workspace filesystem over HTTP. You need to deploy it
 next to your OpenClaw instance, sharing the same workspace directory or volume.
 
@@ -53,7 +53,7 @@ services:
     volumes:
       - ~/.openclaw:/openclaw-config
     ports:
-      - '8080:8080'
+      - '18780:18780'
 ```
 
 :::info Path contract
@@ -70,7 +70,7 @@ services:
 
 Once running, the services are available at:
 
-- Workspace service: `http://localhost:8080`
+- Workspace service: `http://localhost:18780`
 - Gateway: `http://localhost:18789`
 
 ### Option B: Kubernetes
@@ -91,7 +91,7 @@ docker run -d \
   -e CONFIG_ROOT=/openclaw-config \
   -e MAIN_WORKSPACE_DIR=workspace \
   -v /path/to/openclaw/config:/openclaw-config \
-  -p 8080:8080 \
+  -p 18780:18780 \
   ghcr.io/bymosbot/mosbot-workspace-service:latest
 ```
 
@@ -103,7 +103,7 @@ docker run -d \
 
 :::warning Security Note
 
-Do not expose port 8080 to the public internet. Use a VPN or private network, and always use a
+Do not expose port 18780 to the public internet. Use a VPN or private network, and always use a
 strong bearer token. Port 18789 (gateway) should also be kept private. :::
 
 ## OpenClaw configuration file
@@ -149,7 +149,7 @@ Configure this token in MosBot API's `.env` as `OPENCLAW_GATEWAY_TOKEN`.
 ```bash
 # Workspace service health check
 curl -H "Authorization: Bearer <your-workspace-token>" \
-  http://localhost:8080/status
+  http://localhost:18780/status
 
 # Gateway health check
 curl http://localhost:18789/health

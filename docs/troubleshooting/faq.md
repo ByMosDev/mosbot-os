@@ -58,7 +58,7 @@ running separately. See the local development guides in each repo.
 | MosBot API         | 3000                   |
 | MosBot Dashboard   | 5173 (dev) / 80 (prod) |
 | PostgreSQL         | 5432                   |
-| OpenClaw Workspace | 8080                   |
+| OpenClaw Workspace | 18780                  |
 | OpenClaw Gateway   | 18789                  |
 
 ### Can I use a custom domain?

@@ -180,7 +180,7 @@ If OpenClaw also runs in Kubernetes, use in-cluster service DNS names for the in
 
 ```yaml
 # In mosbot-api secret/configmap
-OPENCLAW_WORKSPACE_URL: 'http://openclaw-workspace.openclaw-personal.svc.cluster.local:8080'
+OPENCLAW_WORKSPACE_URL: 'http://openclaw-workspace.openclaw-personal.svc.cluster.local:18780'
 OPENCLAW_GATEWAY_URL: 'http://openclaw.openclaw-personal.svc.cluster.local:18789'
 ```
 

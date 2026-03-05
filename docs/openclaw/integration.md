@@ -16,7 +16,7 @@ To enable workspace browsing, skills management, and agent configuration:
 
 ```bash
 # mosbot-api/.env
-OPENCLAW_WORKSPACE_URL=http://localhost:8080
+OPENCLAW_WORKSPACE_URL=http://localhost:18780
 OPENCLAW_WORKSPACE_TOKEN=your-workspace-token
 ```
 
@@ -33,7 +33,7 @@ To also enable agent monitoring, live session data, and standups:
 
 ```bash
 # mosbot-api/.env
-OPENCLAW_WORKSPACE_URL=http://localhost:8080
+OPENCLAW_WORKSPACE_URL=http://localhost:18780
 OPENCLAW_WORKSPACE_TOKEN=your-workspace-token
 OPENCLAW_GATEWAY_URL=http://localhost:18789
 OPENCLAW_GATEWAY_TOKEN=your-gateway-token
@@ -89,7 +89,7 @@ Use explicit allowlisted roots (`/workspace`, `/workspace-<agent>`, `/docs`, `/p
 Use `localhost` for both services:
 
 ```bash
-OPENCLAW_WORKSPACE_URL=http://localhost:8080
+OPENCLAW_WORKSPACE_URL=http://localhost:18780
 OPENCLAW_GATEWAY_URL=http://localhost:18789
 ```
 
@@ -99,7 +99,7 @@ Port-forward both services to your local machine:
 
 ```bash
 # Terminal 1: Workspace service
-kubectl port-forward -n <namespace> svc/openclaw-workspace 8080:8080
+kubectl port-forward -n <namespace> svc/openclaw-workspace 18780:18780
 
 # Terminal 2: Gateway
 kubectl port-forward -n <namespace> svc/openclaw 18789:18789
@@ -112,7 +112,7 @@ Then use `localhost` in `.env`. See [Local Development](./local-development) for
 Use `host.docker.internal` to reach services on the host from inside a container:
 
 ```bash
-OPENCLAW_WORKSPACE_URL=http://host.docker.internal:8080
+OPENCLAW_WORKSPACE_URL=http://host.docker.internal:18780
 OPENCLAW_GATEWAY_URL=http://host.docker.internal:18789
 ```
 
@@ -121,7 +121,7 @@ OPENCLAW_GATEWAY_URL=http://host.docker.internal:18789
 Use the server's hostname or IP address:
 
 ```bash
-OPENCLAW_WORKSPACE_URL=http://openclaw.example.com:8080
+OPENCLAW_WORKSPACE_URL=http://openclaw.example.com:18780
 OPENCLAW_GATEWAY_URL=http://openclaw.example.com:18789
 ```
 

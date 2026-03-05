@@ -70,11 +70,11 @@ Completed tasks are automatically archived after a configurable number of days.
 Required for workspace file browsing, skills management, and config editing. Without these
 variables, the workspace browser and skills features will be unavailable.
 
-| Variable                   | Default | Description                                                                          |
-| -------------------------- | ------- | ------------------------------------------------------------------------------------ |
-| `OPENCLAW_WORKSPACE_URL`   | —       | URL of the OpenClaw workspace service (e.g. `http://localhost:8080`)                 |
-| `OPENCLAW_WORKSPACE_TOKEN` | —       | Bearer token for workspace service authentication. Obtain from OpenClaw admin panel. |
-| `OPENCLAW_PATH_REMAP_PREFIXES` | `''` | Comma-separated additional host path prefixes remapped to virtual workspace paths before allowlist checks. Built-ins are always active: `/home/node/.openclaw/workspace`, `~/.openclaw/workspace`, `/home/node/.openclaw`, `~/.openclaw` (most specific prefix wins). |
+| Variable                       | Default | Description                                                                                                                                                                                                                                                           |
+| ------------------------------ | ------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `OPENCLAW_WORKSPACE_URL`       | —       | URL of the OpenClaw workspace service (e.g. `http://localhost:18780`)                                                                                                                                                                                                 |
+| `OPENCLAW_WORKSPACE_TOKEN`     | —       | Bearer token for workspace service authentication. Obtain from OpenClaw admin panel.                                                                                                                                                                                  |
+| `OPENCLAW_PATH_REMAP_PREFIXES` | `''`    | Comma-separated additional host path prefixes remapped to virtual workspace paths before allowlist checks. Built-ins are always active: `/home/node/.openclaw/workspace`, `~/.openclaw/workspace`, `/home/node/.openclaw`, `~/.openclaw` (most specific prefix wins). |
 
 Virtual path conventions:
 

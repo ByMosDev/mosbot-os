@@ -17,7 +17,7 @@ sidebar_position: 8
 
 ```bash
 # mosbot-api/.env
-OPENCLAW_WORKSPACE_URL=http://localhost:8080
+OPENCLAW_WORKSPACE_URL=http://localhost:18780
 OPENCLAW_WORKSPACE_TOKEN=your-token
 OPENCLAW_GATEWAY_URL=http://localhost:18789
 OPENCLAW_GATEWAY_TOKEN=your-token
@@ -42,7 +42,7 @@ docker compose restart api
 
 ```bash
 # Test workspace service directly
-curl -H "Authorization: Bearer <token>" http://localhost:8080/status
+curl -H "Authorization: Bearer <token>" http://localhost:18780/status
 
 # Test gateway directly
 curl http://localhost:18789/health
@@ -127,7 +127,7 @@ curl -H "Authorization: Bearer <mosbot-jwt>" \
 
    ```bash
    curl -H "Authorization: Bearer <workspace-token>" \
-     "http://localhost:8080/files/content?path=/openclaw.json"
+     "http://localhost:18780/files/content?path=/openclaw.json"
    ```
 
 ---
@@ -193,7 +193,7 @@ OpenClaw agent config.
 **Fix**: Restart the port-forward:
 
 ```bash
-kubectl port-forward -n openclaw-personal svc/openclaw-workspace 8080:8080
+kubectl port-forward -n openclaw-personal svc/openclaw-workspace 18780:18780
 ```
 
 Consider using a tool like `kubectl-relay` or a persistent tunnel for long-running development
@@ -242,7 +242,7 @@ changes.
 docker compose logs api --tail=100
 
 # Check workspace service status
-curl -H "Authorization: Bearer <workspace-token>" http://localhost:8080/status
+curl -H "Authorization: Bearer <workspace-token>" http://localhost:18780/status
 
 # List agents via MosBot API
 curl -H "Authorization: Bearer <mosbot-jwt>" \

@@ -25,7 +25,7 @@ Both containers share the same workspace PVC, giving the workspace service direc
 │  ┌─────────────┐  ┌──────────────┐  │
 │  │  OpenClaw   │  │  Workspace   │  │
 │  │   Runtime   │  │   Service    │  │
-│  │             │  │  (port 8080) │  │
+│  │             │  │  (port 18780) │  │
 │  └──────┬──────┘  └──────┬───────┘  │
 │         │                │          │
 │         └────────┬───────┘          │
@@ -42,7 +42,7 @@ OpenClaw exposes two Kubernetes services:
 
 | Service              | Port  | Type      | Purpose                   |
 | -------------------- | ----- | --------- | ------------------------- |
-| `openclaw-workspace` | 8080  | ClusterIP | Workspace file access     |
+| `openclaw-workspace` | 18780 | ClusterIP | Workspace file access     |
 | `openclaw`           | 18789 | ClusterIP | Gateway (runtime control) |
 
 Both services should be **ClusterIP** (not LoadBalancer or NodePort) — they should not be publicly
@@ -54,7 +54,7 @@ If MosBot API runs in the same cluster as OpenClaw, use the Kubernetes service D
 
 ```bash
 # mosbot-api secret / configmap
-OPENCLAW_WORKSPACE_URL=http://openclaw-workspace.<namespace>.svc.cluster.local:8080
+OPENCLAW_WORKSPACE_URL=http://openclaw-workspace.<namespace>.svc.cluster.local:18780
 OPENCLAW_WORKSPACE_TOKEN=<workspace-token>
 OPENCLAW_GATEWAY_URL=http://openclaw.<namespace>.svc.cluster.local:18789
 OPENCLAW_GATEWAY_TOKEN=<gateway-token>
@@ -69,7 +69,7 @@ If MosBot API runs outside the cluster, you have two options:
 ### Option A: Port-forward (development only)
 
 ```bash
-kubectl port-forward -n <namespace> svc/openclaw-workspace 8080:8080
+kubectl port-forward -n <namespace> svc/openclaw-workspace 18780:18780
 kubectl port-forward -n <namespace> svc/openclaw 18789:18789
 ```
 
