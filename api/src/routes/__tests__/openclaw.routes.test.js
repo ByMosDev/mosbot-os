@@ -865,6 +865,61 @@ describe('OpenClaw Routes', () => {
       expect(ensureDocsLinkIfMissing).toHaveBeenCalledWith('coo');
     });
 
+    it('should bootstrap main leadership on update when agents.json is missing', async () => {
+      const token = getToken('admin-id', 'admin');
+
+      let callCount = 0;
+      global.fetch = jest.fn().mockImplementation(async (_url, options) => {
+        if (options?.method === 'GET') {
+          callCount++;
+          // First GET: agents.json (missing)
+          if (callCount === 1) {
+            const err = new Error('File not found');
+            err.status = 404;
+            throw err;
+          }
+
+          // Second GET: openclaw.json
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({
+              content: JSON.stringify({ agents: { list: [] } }),
+            }),
+            text: async () => 'OK',
+          };
+        }
+
+        if (options?.method === 'PUT') {
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({ updated: true }),
+            text: async () => 'OK',
+          };
+        }
+
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ content: '{}' }),
+          text: async () => 'OK',
+        };
+      });
+
+      const response = await request(app)
+        .put('/api/v1/openclaw/agents/config/main')
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          title: 'Main Agent',
+          displayName: 'main',
+        });
+
+      expect(response.status).toBe(200);
+      expect(response.body.data).toBeDefined();
+      expect(response.body.data.agentId).toBe('main');
+    });
+
     it('should require displayName', async () => {
       const token = getToken('admin-id', 'admin');
 

@@ -879,16 +879,34 @@ router.put('/agents/config/:agentId', requireAuth, requireAdmin, async (req, res
 
     // --- Update agents.json leadership ---
     let leadership = agentsConfig.leadership || [];
-    const leadershipIndex = leadership.findIndex((l) => l.id === agentId);
+    let leadershipIndex = leadership.findIndex((l) => l.id === agentId);
+
+    // agents.json may not exist yet on fresh installs. In that case, allow editing
+    // implicit agents (e.g. main) and bootstrap their leadership entry on demand.
+    const openclawAgentsList = openclawConfig.agents?.list || [];
+    const existsInOpenClaw = agentId === 'main' || openclawAgentsList.some((a) => a.id === agentId);
 
     if (leadershipIndex < 0) {
-      return res.status(404).json({
-        error: {
-          message: `Agent "${agentId}" not found in agents config`,
-          status: 404,
-          code: 'AGENT_NOT_FOUND',
-        },
+      if (!existsInOpenClaw) {
+        return res.status(404).json({
+          error: {
+            message: `Agent "${agentId}" not found in agents config`,
+            status: 404,
+            code: 'AGENT_NOT_FOUND',
+          },
+        });
+      }
+
+      leadership.push({
+        id: agentId,
+        title: agentData.title || agentData.identityName || agentId,
+        label: agentData.label || `agent:${agentId}:main`,
+        displayName: agentData.displayName || agentData.identityName || agentId,
+        description: agentData.description || '',
+        status: agentData.status || 'active',
+        reportsTo: agentData.reportsTo || null,
       });
+      leadershipIndex = leadership.length - 1;
     }
 
     // Update only the fields the form manages
