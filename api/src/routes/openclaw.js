@@ -611,6 +611,23 @@ router.get('/agents', requireAuth, async (req, res, next) => {
         isDefault: agent.default === true,
       }));
 
+      // OpenClaw always has an implicit default "main" agent even when agents.list is empty.
+      // Provide a synthetic fallback so dashboards don't render mock placeholder users.
+      if (agents.length === 0) {
+        agents = [
+          {
+            id: 'main',
+            name: 'main',
+            label: 'main',
+            title: null,
+            description: 'Default OpenClaw agent workspace',
+            icon: '🦞',
+            workspace: '/workspace',
+            isDefault: true,
+          },
+        ];
+      }
+
       // Enrich agent names from users table (users.name is the canonical display name)
       try {
         const pool = require('../db/pool');

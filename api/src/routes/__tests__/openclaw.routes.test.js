@@ -464,6 +464,38 @@ describe('OpenClaw Routes', () => {
       expect(response.body.data[0]).toHaveProperty('workspace');
     });
 
+    it('should return main fallback when agents list is empty', async () => {
+      const token = getToken('user-id', 'user');
+
+      global.fetch = jest.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          content: JSON.stringify({
+            agents: {
+              list: [],
+            },
+          }),
+        }),
+        text: async () => 'OK',
+      });
+
+      pool.query.mockResolvedValue({ rows: [] });
+
+      const response = await request(app)
+        .get('/api/v1/openclaw/agents')
+        .set('Authorization', `Bearer ${token}`);
+
+      expect(response.status).toBe(200);
+      expect(response.body.data).toBeInstanceOf(Array);
+      expect(response.body.data).toHaveLength(1);
+      expect(response.body.data[0]).toMatchObject({
+        id: 'main',
+        workspace: '/workspace',
+        isDefault: true,
+      });
+    });
+
     it('should return empty array when config file is missing', async () => {
       const token = getToken('user-id', 'user');
 
