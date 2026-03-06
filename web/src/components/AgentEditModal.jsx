@@ -83,19 +83,12 @@ export default function AgentEditModal({ isOpen, onClose, onSave, agentId = null
 
   const loadAvailableLeaders = async () => {
     try {
-      const response = await api.get('/openclaw/workspace/files/content', {
-        params: { path: '/agents.json' },
-      });
-
-      const config = JSON.parse(response.data.data.content);
+      const response = await api.get('/openclaw/agents/config');
+      const config = response.data?.data || {};
       const leaders = (config.leadership || []).filter((l) => l.status !== 'human');
       setAvailableLeaders(leaders);
     } catch (error) {
-      // If agents.json doesn't exist (404) or fails to parse, that's ok
-      // Just use empty list - user can still create agents without reportsTo
-      if (error.response?.status !== 404) {
-        logger.warn('Failed to load available leaders', { error: error.message });
-      }
+      logger.warn('Failed to load available leaders', { error: error.message });
       setAvailableLeaders([]);
     }
   };
@@ -127,62 +120,31 @@ export default function AgentEditModal({ isOpen, onClose, onSave, agentId = null
   const loadAgentData = async () => {
     setIsLoading(true);
     try {
-      // Use Promise.allSettled to handle partial failures gracefully
-      const [agentsConfigResult, openclawResult] = await Promise.allSettled([
-        api
-          .get('/openclaw/workspace/files/content', {
-            params: { path: '/agents.json' },
-          })
-          .catch((err) => {
-            // Return null for 404s (file doesn't exist), rethrow other errors
-            if (err.response?.status === 404) {
-              return null;
-            }
-            throw err;
-          }),
-        api
-          .get('/openclaw/workspace/files/content', {
-            params: { path: '/openclaw.json' },
-          })
-          .catch((err) => {
-            // Return null for 404s (file doesn't exist), rethrow other errors
-            if (err.response?.status === 404) {
-              return null;
-            }
-            throw err;
-          }),
+      // Use normalized API endpoints that synthesize implicit defaults (e.g. main)
+      // instead of reading raw files directly.
+      const [agentsConfigResult, agentsResult] = await Promise.allSettled([
+        api.get('/openclaw/agents/config'),
+        api.get('/openclaw/agents'),
       ]);
 
-      // Parse responses only if they succeeded
       let agentsConfig = null;
-      let openclawConfig = null;
+      let openclawAgents = null;
 
       if (agentsConfigResult.status === 'fulfilled' && agentsConfigResult.value) {
-        try {
-          agentsConfig = JSON.parse(agentsConfigResult.value.data.data.content);
-        } catch (parseError) {
-          logger.warn('Failed to parse agents.json', { error: parseError.message });
-        }
+        agentsConfig = agentsConfigResult.value.data?.data || null;
       } else if (agentsConfigResult.status === 'rejected') {
-        logger.warn('Failed to load agents.json', { error: agentsConfigResult.reason?.message });
+        logger.warn('Failed to load agents config', { error: agentsConfigResult.reason?.message });
       }
 
-      if (openclawResult.status === 'fulfilled' && openclawResult.value) {
-        try {
-          openclawConfig = JSON.parse(openclawResult.value.data.data.content);
-        } catch (parseError) {
-          logger.warn('Failed to parse openclaw.json', { error: parseError.message });
-        }
-      } else if (openclawResult.status === 'rejected') {
-        logger.warn('Failed to load openclaw.json', { error: openclawResult.reason?.message });
+      if (agentsResult.status === 'fulfilled' && agentsResult.value) {
+        openclawAgents = agentsResult.value.data?.data || null;
+      } else if (agentsResult.status === 'rejected') {
+        logger.warn('Failed to load agents list', { error: agentsResult.reason?.message });
       }
 
-      // If both files failed to load, show error
-      if (!agentsConfig && !openclawConfig) {
-        showToast(
-          'Failed to load configuration files. Please check your connection and try again.',
-          'error',
-        );
+      // If both API calls failed, show error
+      if (!agentsConfig && !openclawAgents) {
+        showToast('Failed to load agent configuration. Please try again.', 'error');
         onClose();
         return;
       }
@@ -192,9 +154,9 @@ export default function AgentEditModal({ isOpen, onClose, onSave, agentId = null
         ? (agentsConfig.leadership || []).find((l) => l.id === agentId)
         : null;
 
-      // Find agent in openclaw config
-      const agentEntry = openclawConfig
-        ? (openclawConfig.agents?.list || []).find((a) => a.id === agentId)
+      // Find agent in normalized OpenClaw agents list
+      const agentEntry = Array.isArray(openclawAgents)
+        ? openclawAgents.find((a) => a.id === agentId)
         : null;
 
       if (!leadershipEntry && !agentEntry) {
