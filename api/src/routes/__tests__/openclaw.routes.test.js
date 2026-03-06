@@ -496,6 +496,41 @@ describe('OpenClaw Routes', () => {
       });
     });
 
+    it('should append synthetic main when agents list has entries but no main', async () => {
+      const token = getToken('user-id', 'user');
+
+      global.fetch = jest.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          content: JSON.stringify({
+            agents: {
+              list: [
+                {
+                  id: 'coo',
+                  name: 'COO',
+                  identity: { name: 'COO' },
+                  workspace: '/workspace/coo',
+                  default: true,
+                },
+              ],
+            },
+          }),
+        }),
+        text: async () => 'OK',
+      });
+
+      pool.query.mockResolvedValue({ rows: [] });
+
+      const response = await request(app)
+        .get('/api/v1/openclaw/agents')
+        .set('Authorization', `Bearer ${token}`);
+
+      expect(response.status).toBe(200);
+      expect(response.body.data.some((a) => a.id === 'coo')).toBe(true);
+      expect(response.body.data.some((a) => a.id === 'main')).toBe(true);
+    });
+
     it('should return empty array when config file is missing', async () => {
       const token = getToken('user-id', 'user');
 
@@ -653,6 +688,17 @@ describe('OpenClaw Routes', () => {
       expect(response.body.data).toBeDefined();
     });
 
+    it('should append synthetic main in agents/config when leadership lacks main', async () => {
+      const token = getToken('user-id', 'user');
+
+      const response = await request(app)
+        .get('/api/v1/openclaw/agents/config')
+        .set('Authorization', `Bearer ${token}`);
+
+      expect(response.status).toBe(200);
+      expect(response.body.data.leadership.some((l) => l.id === 'main')).toBe(true);
+    });
+
     it('should auto-generate agents config from agents.list when agents.json is missing', async () => {
       const token = getToken('user-id', 'user');
 
@@ -692,8 +738,8 @@ describe('OpenClaw Routes', () => {
 
       expect(response.status).toBe(200);
       expect(response.body.data).toBeDefined();
-      expect(response.body.data.leadership).toHaveLength(1);
-      expect(response.body.data.leadership[0].displayName).toBe('MosBot');
+      expect(response.body.data.leadership.some((l) => l.id === 'orchestrator')).toBe(true);
+      expect(response.body.data.leadership.some((l) => l.id === 'main')).toBe(true);
       expect(response.body.data.departments).toEqual([]);
     });
 
