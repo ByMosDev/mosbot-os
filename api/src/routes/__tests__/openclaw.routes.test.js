@@ -697,6 +697,43 @@ describe('OpenClaw Routes', () => {
       expect(response.body.data.departments).toEqual([]);
     });
 
+    it('should synthesize main leadership when agents.list is empty', async () => {
+      const token = getToken('user-id', 'user');
+
+      let callCount = 0;
+      global.fetch = jest.fn().mockImplementation(async () => {
+        callCount++;
+        // First call: agents.json → 404
+        if (callCount === 1) {
+          const err = new Error('File not found');
+          err.status = 404;
+          throw err;
+        }
+        // Second call: openclaw.json with empty agents.list
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            content: JSON.stringify({ agents: { list: [] } }),
+          }),
+          text: async () => 'OK',
+        };
+      });
+
+      const response = await request(app)
+        .get('/api/v1/openclaw/agents/config')
+        .set('Authorization', `Bearer ${token}`);
+
+      expect(response.status).toBe(200);
+      expect(response.body.data.leadership).toHaveLength(1);
+      expect(response.body.data.leadership[0]).toMatchObject({
+        id: 'main',
+        displayName: 'main',
+        label: 'agent:main:main',
+      });
+      expect(response.body.data.departments).toEqual([]);
+    });
+
     it('should return empty agents config when both files are missing', async () => {
       const token = getToken('user-id', 'user');
 

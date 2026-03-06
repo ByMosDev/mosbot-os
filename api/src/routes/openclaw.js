@@ -765,7 +765,7 @@ router.get('/agents/config', requireAuth, async (req, res, next) => {
           const agentsList = config?.agents?.list || [];
 
           // Build a flat agents config from agents.list using standard identity fields
-          const leadership = agentsList.map((agent) => ({
+          let leadership = agentsList.map((agent) => ({
             id: agent.id,
             title: agent.identity?.name || agent.id,
             label: `agent:${agent.id}:main`,
@@ -776,6 +776,24 @@ router.get('/agents/config', requireAuth, async (req, res, next) => {
             reportsTo: null,
             model: agent.model?.primary || null,
           }));
+
+          // If agents.list is empty, synthesize the implicit default "main" agent
+          // so the Agents dashboard doesn't render an empty-state for a healthy OpenClaw install.
+          if (leadership.length === 0) {
+            leadership = [
+              {
+                id: 'main',
+                title: 'main',
+                label: 'agent:main:main',
+                displayName: 'main',
+                description: 'Default OpenClaw agent',
+                emoji: '🦞',
+                status: 'active',
+                reportsTo: null,
+                model: null,
+              },
+            ];
+          }
 
           return res.json({
             data: { version: 1, leadership, departments: [] },
