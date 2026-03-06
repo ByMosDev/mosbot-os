@@ -90,13 +90,13 @@ describe('agentStore', () => {
     );
   });
 
-  it('fetchAgents uses fallback list and includes archived only when probe confirms it exists', async () => {
+  it('fetchAgents uses main fallback and includes archived only when probe confirms it exists', async () => {
     getAgents.mockResolvedValueOnce([]);
     api.get.mockResolvedValueOnce({ data: { data: { files: [] } } });
 
     const result = await useAgentStore.getState().fetchAgents();
 
-    expect(result.map((a) => a.id)).toEqual(['coo', 'cto', 'cmo', 'cpo', 'archived']);
+    expect(result.map((a) => a.id)).toEqual(['main', 'archived']);
   });
 
   it('fetchAgents falls back when API fails', async () => {
@@ -112,7 +112,7 @@ describe('agentStore', () => {
     expect(state.isInitialized).toBe(true);
     expect(state.isLoading).toBe(false);
     expect(state.error).toBe('fetch failed');
-    expect(result.length).toBeGreaterThan(1);
+    expect(result.map((agent) => agent.id)).toEqual(['main']);
     expect(result.some((agent) => agent.id === 'archived')).toBe(false);
   });
 

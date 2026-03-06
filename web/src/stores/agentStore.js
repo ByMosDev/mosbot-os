@@ -35,43 +35,17 @@ const hasArchivedWorkspace = async () => {
   }
 };
 
-// Fallback agents if API fails or returns empty
+// Fallback agent when OpenClaw has no explicitly configured extra agents.
+// OpenClaw always has a default "main" agent even when /openclaw/agents returns [].
 const fallbackAgents = [
   {
-    id: 'coo',
-    name: 'MosBot',
-    label: 'MosBot (COO)',
-    description: 'Chief Operating Officer and Task Orchestrator',
+    id: 'main',
+    name: 'main',
+    label: 'main (Default)',
+    description: 'Default OpenClaw agent',
     workspaceRootPath: '/workspace',
-    icon: '📊',
-    isDefault: false,
-  },
-  {
-    id: 'cto',
-    name: 'Elon',
-    label: 'Elon (CTO)',
-    description: 'Tech Architect',
-    workspaceRootPath: '/workspace-cto',
-    icon: '💼',
-    isDefault: false,
-  },
-  {
-    id: 'cmo',
-    name: 'Gary',
-    label: 'Gary (CMO)',
-    description: 'Marketing Strategist',
-    workspaceRootPath: '/workspace-cmo',
-    icon: '📢',
-    isDefault: false,
-  },
-  {
-    id: 'cpo',
-    name: 'Alex',
-    label: 'Alex (CPO)',
-    description: 'Product Strategist',
-    workspaceRootPath: '/workspace-cpo',
-    icon: '💡',
-    isDefault: false,
+    icon: '🦞',
+    isDefault: true,
   },
 ];
 
