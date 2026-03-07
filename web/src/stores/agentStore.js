@@ -35,8 +35,8 @@ const hasArchivedWorkspace = async () => {
   }
 };
 
-// Fallback agent when OpenClaw has no explicitly configured extra agents.
-// OpenClaw always has a default "main" agent even when /openclaw/agents returns [].
+// Fallback agent when /openclaw/agents cannot provide agents
+// (for example, when config cannot be read or the endpoint returns []).
 const fallbackAgents = [
   {
     id: 'main',

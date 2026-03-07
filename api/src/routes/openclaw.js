@@ -141,6 +141,35 @@ function resolveAgentWorkspacePath(agent) {
   return `/workspace-${agentId}`;
 }
 
+function buildImplicitMainAgent(overrides = {}) {
+  return {
+    id: 'main',
+    name: 'main',
+    label: 'main',
+    title: null,
+    description: 'Default OpenClaw agent workspace',
+    icon: '🦞',
+    workspace: '/workspace',
+    isDefault: true,
+    ...overrides,
+  };
+}
+
+function buildImplicitMainLeadership(overrides = {}) {
+  return {
+    id: 'main',
+    title: 'main',
+    label: 'agent:main:main',
+    displayName: 'main',
+    description: 'Default OpenClaw agent',
+    emoji: '🦞',
+    status: 'active',
+    reportsTo: null,
+    model: null,
+    ...overrides,
+  };
+}
+
 /**
  * Validate that a workspace path is allowed for access
  * @param {string} workspacePath - Normalized workspace path
@@ -614,16 +643,7 @@ router.get('/agents', requireAuth, async (req, res, next) => {
       // OpenClaw always has an implicit "main" agent session, even when it is not explicitly
       // listed in openclaw.json agents.list. Ensure dashboards always see a main entry.
       if (!agents.some((a) => a.id === 'main')) {
-        agents.push({
-          id: 'main',
-          name: 'main',
-          label: 'main',
-          title: null,
-          description: 'Default OpenClaw agent workspace',
-          icon: '🦞',
-          workspace: '/workspace',
-          isDefault: agents.length === 0,
-        });
+        agents.push(buildImplicitMainAgent({ isDefault: agents.length === 0 }));
       }
 
       // Enrich agent names from users table (users.name is the canonical display name)
@@ -746,17 +766,7 @@ router.get('/agents/config', requireAuth, async (req, res, next) => {
 
       // Ensure implicit default main agent is always represented in leadership.
       if (!leadership.some((entry) => entry.id === 'main')) {
-        leadership.push({
-          id: 'main',
-          title: 'main',
-          label: 'agent:main:main',
-          displayName: 'main',
-          description: 'Default OpenClaw agent',
-          emoji: '🦞',
-          status: 'active',
-          reportsTo: null,
-          model: null,
-        });
+        leadership.push(buildImplicitMainLeadership());
       }
 
       // Return in the same format the dashboard expects
@@ -792,17 +802,7 @@ router.get('/agents/config', requireAuth, async (req, res, next) => {
 
           // Ensure implicit default "main" is always represented when auto-generating config.
           if (!leadership.some((entry) => entry.id === 'main')) {
-            leadership.push({
-              id: 'main',
-              title: 'main',
-              label: 'agent:main:main',
-              displayName: 'main',
-              description: 'Default OpenClaw agent',
-              emoji: '🦞',
-              status: 'active',
-              reportsTo: null,
-              model: null,
-            });
+            leadership.push(buildImplicitMainLeadership());
           }
 
           return res.json({
