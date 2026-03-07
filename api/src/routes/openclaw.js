@@ -141,6 +141,35 @@ function resolveAgentWorkspacePath(agent) {
   return `/workspace-${agentId}`;
 }
 
+function buildImplicitMainAgent(overrides = {}) {
+  return {
+    id: 'main',
+    name: 'main',
+    label: 'main',
+    title: null,
+    description: 'Default OpenClaw agent workspace',
+    icon: '🦞',
+    workspace: '/workspace',
+    isDefault: true,
+    ...overrides,
+  };
+}
+
+function buildImplicitMainLeadership(overrides = {}) {
+  return {
+    id: 'main',
+    title: 'main',
+    label: 'agent:main:main',
+    displayName: 'main',
+    description: 'Default OpenClaw agent',
+    emoji: '🦞',
+    status: 'active',
+    reportsTo: null,
+    model: null,
+    ...overrides,
+  };
+}
+
 /**
  * Validate that a workspace path is allowed for access
  * @param {string} workspacePath - Normalized workspace path
@@ -611,6 +640,12 @@ router.get('/agents', requireAuth, async (req, res, next) => {
         isDefault: agent.default === true,
       }));
 
+      // OpenClaw always has an implicit "main" agent session, even when it is not explicitly
+      // listed in openclaw.json agents.list. Ensure dashboards always see a main entry.
+      if (!agents.some((a) => a.id === 'main')) {
+        agents.push(buildImplicitMainAgent({ isDefault: agents.length === 0 }));
+      }
+
       // Enrich agent names from users table (users.name is the canonical display name)
       try {
         const pool = require('../db/pool');
@@ -729,6 +764,11 @@ router.get('/agents/config', requireAuth, async (req, res, next) => {
         }),
       }));
 
+      // Ensure implicit default main agent is always represented in leadership.
+      if (!leadership.some((entry) => entry.id === 'main')) {
+        leadership.push(buildImplicitMainLeadership());
+      }
+
       // Return in the same format the dashboard expects
       const validatedConfig = {
         version: agentsConfig.version || 1,
@@ -748,7 +788,7 @@ router.get('/agents/config', requireAuth, async (req, res, next) => {
           const agentsList = config?.agents?.list || [];
 
           // Build a flat agents config from agents.list using standard identity fields
-          const leadership = agentsList.map((agent) => ({
+          let leadership = agentsList.map((agent) => ({
             id: agent.id,
             title: agent.identity?.name || agent.id,
             label: `agent:${agent.id}:main`,
@@ -759,6 +799,11 @@ router.get('/agents/config', requireAuth, async (req, res, next) => {
             reportsTo: null,
             model: agent.model?.primary || null,
           }));
+
+          // Ensure implicit default "main" is always represented when auto-generating config.
+          if (!leadership.some((entry) => entry.id === 'main')) {
+            leadership.push(buildImplicitMainLeadership());
+          }
 
           return res.json({
             data: { version: 1, leadership, departments: [] },
@@ -813,11 +858,13 @@ router.put('/agents/config/:agentId', requireAuth, requireAdmin, async (req, res
 
     // Load current configs
     let agentsConfig;
+    let agentsConfigMissing = false;
     try {
       const agentsData = await makeOpenClawRequest('GET', '/files/content?path=/agents.json');
       agentsConfig = JSON.parse(agentsData.content);
     } catch (err) {
       if (err.status === 404) {
+        agentsConfigMissing = true;
         agentsConfig = {
           version: 1,
           leadership: [],
@@ -834,16 +881,34 @@ router.put('/agents/config/:agentId', requireAuth, requireAdmin, async (req, res
 
     // --- Update agents.json leadership ---
     let leadership = agentsConfig.leadership || [];
-    const leadershipIndex = leadership.findIndex((l) => l.id === agentId);
+    let leadershipIndex = leadership.findIndex((l) => l.id === agentId);
+
+    // agents.json may not exist yet on fresh installs. In that case, allow editing
+    // implicit agents (e.g. main) and bootstrap their leadership entry on demand.
+    const openclawAgentsList = openclawConfig.agents?.list || [];
+    const existsInOpenClaw = agentId === 'main' || openclawAgentsList.some((a) => a.id === agentId);
 
     if (leadershipIndex < 0) {
-      return res.status(404).json({
-        error: {
-          message: `Agent "${agentId}" not found in agents config`,
-          status: 404,
-          code: 'AGENT_NOT_FOUND',
-        },
+      if (!existsInOpenClaw) {
+        return res.status(404).json({
+          error: {
+            message: `Agent "${agentId}" not found in agents config`,
+            status: 404,
+            code: 'AGENT_NOT_FOUND',
+          },
+        });
+      }
+
+      leadership.push({
+        id: agentId,
+        title: agentData.title || agentData.identityName || agentId,
+        label: agentData.label || `agent:${agentId}:main`,
+        displayName: agentData.displayName || agentData.identityName || agentId,
+        description: agentData.description || '',
+        status: agentData.status || 'active',
+        reportsTo: agentData.reportsTo || null,
       });
+      leadershipIndex = leadership.length - 1;
     }
 
     // Update only the fields the form manages
@@ -941,12 +1006,30 @@ router.put('/agents/config/:agentId', requireAuth, requireAdmin, async (req, res
     const agentsContent = JSON.stringify(agentsConfig, null, 2) + '\n';
     const openclawContent = JSON.stringify(openclawConfig, null, 2) + '\n';
 
+    const writeAgentsConfig = async () => {
+      // If agents.json was missing, create it; otherwise update it.
+      const method = agentsConfigMissing ? 'POST' : 'PUT';
+      try {
+        return await makeOpenClawRequest(method, '/files', {
+          path: '/agents.json',
+          content: agentsContent,
+          encoding: 'utf8',
+        });
+      } catch (err) {
+        // Defensive fallback: if update races with missing file, retry as create.
+        if (method === 'PUT' && err.status === 404) {
+          return makeOpenClawRequest('POST', '/files', {
+            path: '/agents.json',
+            content: agentsContent,
+            encoding: 'utf8',
+          });
+        }
+        throw err;
+      }
+    };
+
     await Promise.all([
-      makeOpenClawRequest('PUT', '/files', {
-        path: '/agents.json',
-        content: agentsContent,
-        encoding: 'utf8',
-      }),
+      writeAgentsConfig(),
       makeOpenClawRequest('PUT', '/files', {
         path: '/openclaw.json',
         content: openclawContent,
@@ -1021,11 +1104,13 @@ router.post('/agents/config', requireAuth, requireAdmin, async (req, res, next) 
 
     // Load current configs
     let agentsConfig;
+    let agentsConfigMissing = false;
     try {
       const agentsData = await makeOpenClawRequest('GET', '/files/content?path=/agents.json');
       agentsConfig = JSON.parse(agentsData.content);
     } catch (err) {
       if (err.status === 404) {
+        agentsConfigMissing = true;
         agentsConfig = {
           version: 1,
           leadership: [],
@@ -1107,12 +1192,28 @@ router.post('/agents/config', requireAuth, requireAdmin, async (req, res, next) 
     const agentsContent = JSON.stringify(agentsConfig, null, 2) + '\n';
     const openclawContent = JSON.stringify(openclawConfig, null, 2) + '\n';
 
+    const writeAgentsConfig = async () => {
+      const method = agentsConfigMissing ? 'POST' : 'PUT';
+      try {
+        return await makeOpenClawRequest(method, '/files', {
+          path: '/agents.json',
+          content: agentsContent,
+          encoding: 'utf8',
+        });
+      } catch (err) {
+        if (method === 'PUT' && err.status === 404) {
+          return makeOpenClawRequest('POST', '/files', {
+            path: '/agents.json',
+            content: agentsContent,
+            encoding: 'utf8',
+          });
+        }
+        throw err;
+      }
+    };
+
     await Promise.all([
-      makeOpenClawRequest('PUT', '/files', {
-        path: '/agents.json',
-        content: agentsContent,
-        encoding: 'utf8',
-      }),
+      writeAgentsConfig(),
       makeOpenClawRequest('PUT', '/files', {
         path: '/openclaw.json',
         content: openclawContent,
