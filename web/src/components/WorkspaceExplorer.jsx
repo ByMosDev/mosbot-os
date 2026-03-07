@@ -268,6 +268,12 @@ export default function WorkspaceExplorer({
 
     const { path, isDirectory } = normalizedPath;
 
+    // Tree mode is rooted at "/". On deep-link refresh, ensure root listing is fetched
+    // so the left pane does not render an empty state while breadcrumbs point deeper.
+    fetchListing({ path: '/', recursive: false, force: true, agentId }).catch(() => {
+      // Ignore root prefetch errors here; path-specific handling below will surface actionable errors.
+    });
+
     if (isDirectory) {
       setCurrentPath(path);
       setSelectedFile(null);
