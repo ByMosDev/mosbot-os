@@ -368,6 +368,9 @@ export default function WorkspaceExplorer({
 
   const handleRefresh = async () => {
     clearErrors();
+    // Save current state before clearing so we can restore it after refresh
+    const savedSelectedFile = selectedFile;
+    const savedCurrentPath = currentPath;
     try {
       // Clear all cached listings to ensure fresh data throughout the tree
       useWorkspaceStore.getState().clearAllListingCache();
@@ -379,12 +382,26 @@ export default function WorkspaceExplorer({
       setExpandedPaths(new Set());
       setTreeKey((prev) => prev + 1);
 
-      // Clear selected file to force refetch when reselected
+      // Clear selected file temporarily while we reload
       setSelectedFile(null);
-      navigate(actualRouteBase, { replace: true });
+      // Do NOT navigate away — keep the current URL so the path is preserved on refresh
 
-      // Fetch root level (or current path in flat view)
-      await fetchListing({ path: currentPath, recursive, force: true, agentId });
+      // Always fetch root (tree view needs it)
+      await fetchListing({ path: '/', recursive: false, force: true, agentId });
+
+      // Fetch the current directory listing if not at root
+      if (savedCurrentPath !== '/') {
+        await fetchListing({ path: savedCurrentPath, recursive: false, force: true, agentId });
+      }
+
+      // Re-expand ancestors and restore the selected file
+      if (savedSelectedFile) {
+        await expandAncestors(savedSelectedFile.path);
+        setSelectedFile(savedSelectedFile);
+      } else if (savedCurrentPath !== '/') {
+        await expandAncestors(savedCurrentPath + '/__placeholder__');
+      }
+
       showToast('Workspace refreshed', 'success');
     } catch (error) {
       showToast(error.response?.data?.error?.message || 'Failed to refresh workspace', 'error');
