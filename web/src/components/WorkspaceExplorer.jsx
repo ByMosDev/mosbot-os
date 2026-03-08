@@ -65,6 +65,7 @@ export default function WorkspaceExplorer({
     isLoadingListing,
     listingError,
     listingErrors,
+    loadingListings,
     selectedFile,
     currentPath,
     fetchListing,
@@ -196,8 +197,16 @@ export default function WorkspaceExplorer({
   // Always fetch non-recursively (one level at a time)
   const recursive = false;
   const cacheKey = `${agentId}:${currentPath}:${recursive}`;
+  const rootCacheKey = `${agentId}:/:false`;
   const currentListing = listings[cacheKey];
   const currentListingError = listingErrors?.[cacheKey] || listingError;
+  const rootListing = listings[rootCacheKey];
+  const rootListingError = listingErrors?.[rootCacheKey] || null;
+  const isTreeRootMissing = viewMode === 'tree' && !rootListing;
+  const effectiveListingError = isTreeRootMissing
+    ? rootListingError || currentListingError
+    : currentListingError;
+  const isLoadingRootListing = !!loadingListings?.[rootCacheKey];
 
   // Build children cache from all loaded listings for current agent
   const childrenCache = useMemo(() => {
@@ -267,6 +276,19 @@ export default function WorkspaceExplorer({
     if (!normalizedPath) return;
 
     const { path, isDirectory } = normalizedPath;
+
+    // Tree mode is rooted at "/". On deep-link refresh, ensure root listing is fetched
+    // so the left pane does not render an empty state while breadcrumbs point deeper.
+    // Only fetch if not already cached — avoid force:true to prevent unnecessary churn.
+    const state = useWorkspaceStore.getState();
+    const rootCacheKey = `${agentId}:/:false`;
+    const hasRootListing = !!state.listings[rootCacheKey];
+
+    if (!hasRootListing) {
+      fetchListing({ path: '/', recursive: false, agentId }).catch(() => {
+        // Ignore root prefetch errors here; path-specific handling below will surface actionable errors.
+      });
+    }
 
     if (isDirectory) {
       setCurrentPath(path);
@@ -340,8 +362,22 @@ export default function WorkspaceExplorer({
     showToast,
   ]);
 
+  // Tree view is always rooted at '/'. Ensure root listing is hydrated after deep-link loads
+  // so the left pane does not fall into a stale "No files found" state.
+  useEffect(() => {
+    if (viewMode !== 'tree') return;
+    if (rootListing || rootListingError || isLoadingRootListing) return;
+
+    fetchListing({ path: '/', recursive: false, agentId }).catch(() => {
+      // Root listing errors are surfaced via rootListingError state in the pane UI.
+    });
+  }, [viewMode, rootListing, rootListingError, isLoadingRootListing, fetchListing, agentId]);
+
   const handleRefresh = async () => {
     clearErrors();
+    // Save current state before clearing so we can restore it after refresh
+    const savedSelectedFile = selectedFile;
+    const savedCurrentPath = currentPath;
     try {
       // Clear all cached listings to ensure fresh data throughout the tree
       useWorkspaceStore.getState().clearAllListingCache();
@@ -353,12 +389,31 @@ export default function WorkspaceExplorer({
       setExpandedPaths(new Set());
       setTreeKey((prev) => prev + 1);
 
-      // Clear selected file to force refetch when reselected
+      // Clear selected file temporarily while we reload
       setSelectedFile(null);
-      navigate(actualRouteBase, { replace: true });
+      // Do NOT navigate away — keep the current URL so the path is preserved on refresh
 
-      // Fetch root level (or current path in flat view)
-      await fetchListing({ path: currentPath, recursive, force: true, agentId });
+      // Fetch root only when needed:
+      // - Tree view requires the root listing to render the tree
+      // - Flat view at the root still needs '/' for the visible listing
+      const shouldFetchRoot = viewMode === 'tree' || savedCurrentPath === '/';
+      if (shouldFetchRoot) {
+        await fetchListing({ path: '/', recursive: false, force: true, agentId });
+      }
+
+      // Fetch the current directory listing if not at root
+      if (savedCurrentPath !== '/') {
+        await fetchListing({ path: savedCurrentPath, recursive: false, force: true, agentId });
+      }
+
+      // Re-expand ancestors and restore the selected file
+      if (savedSelectedFile) {
+        await expandAncestors(savedSelectedFile.path);
+        setSelectedFile(savedSelectedFile);
+      } else if (savedCurrentPath !== '/') {
+        await expandAncestors(savedCurrentPath + '/__placeholder__');
+      }
+
       showToast('Workspace refreshed', 'success');
     } catch (error) {
       showToast(error.response?.data?.error?.message || 'Failed to refresh workspace', 'error');
@@ -474,7 +529,6 @@ export default function WorkspaceExplorer({
 
   // For tree view: always show root listing so the tree is rooted at "/" and
   // folders are expanded via expandedPaths rather than by changing currentPath.
-  const rootListing = listings[`${agentId}:/:false`];
   const rootFiles =
     rootListing?.files?.filter((file) => {
       if (!showHiddenFiles && file.name.startsWith('.')) return false;
@@ -889,18 +943,18 @@ export default function WorkspaceExplorer({
       </div>
 
       {/* Error banner - hide during workspace transitions to prevent flashing stale errors */}
-      {currentListingError && !justSwitchedWorkspace && (
+      {effectiveListingError && !justSwitchedWorkspace && (
         <div className="px-4 py-2 bg-red-900/20 border-b border-red-900/50 text-red-300 text-sm flex items-start justify-between gap-3">
           <div className="min-w-0">
             <p className="font-medium text-red-300">Failed to load workspace files</p>
-            <p className="text-red-300/90 break-words">{currentListingError}</p>
+            <p className="text-red-300/90 break-words">{effectiveListingError}</p>
             <p className="mt-1 text-red-300/80">
               Try refreshing. If it keeps failing, wait a bit and reload the page.
             </p>
           </div>
           <button
             onClick={handleRefresh}
-            disabled={isLoadingListing}
+            disabled={isLoadingListing || isLoadingRootListing}
             className="btn-secondary whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed"
           >
             Refresh
@@ -921,14 +975,15 @@ export default function WorkspaceExplorer({
             </div>
           )}
           <div className={leftPaneTop ? 'flex-1 overflow-y-auto' : 'overflow-y-auto h-full'}>
-            {isLoadingListing && !currentListing ? (
+            {(isLoadingListing && !currentListing) ||
+            (isTreeRootMissing && !effectiveListingError) ? (
               <div className="flex items-center justify-center h-full">
                 <div className="flex flex-col items-center gap-3">
                   <div className="inline-block w-8 h-8 border-4 border-primary-600 border-t-transparent rounded-full animate-spin"></div>
                   <p className="text-dark-400 text-sm">Loading files...</p>
                 </div>
               </div>
-            ) : currentListingError && !currentListing ? (
+            ) : effectiveListingError && !currentListing ? (
               <div className="flex items-center justify-center h-full px-4">
                 <div className="text-center space-y-3">
                   <p className="text-sm text-dark-300">
@@ -936,7 +991,7 @@ export default function WorkspaceExplorer({
                   </p>
                   <button
                     onClick={handleRefresh}
-                    disabled={isLoadingListing}
+                    disabled={isLoadingListing || isLoadingRootListing}
                     className="btn-primary disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     Try again
