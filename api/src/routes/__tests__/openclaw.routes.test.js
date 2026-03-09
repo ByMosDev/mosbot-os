@@ -57,6 +57,7 @@ const {
   cronList,
   gatewayWsRpc,
   sessionsListAllViaWs,
+  sessionsList,
   sessionsHistory,
 } = require('../../services/openclawGatewayClient');
 const { createCronJob } = require('../../services/cronJobsService');
@@ -1126,15 +1127,15 @@ describe('OpenClaw Routes', () => {
 
   describe('GET /api/v1/openclaw/sessions/status', () => {
     beforeEach(() => {
+      const now = Date.now();
       sessionsListAllViaWs.mockResolvedValue([
-        { key: 'session-1', status: 'running' },
-        { key: 'session-2', status: 'running' },
-        { key: 'session-3', status: 'idle' },
-        { key: 'session-4', status: 'idle' },
+        { key: 'session-1', updatedAt: now - 30 * 1000 },
+        { key: 'session-2', updated_at: now - 5 * 60 * 1000 },
+        { key: 'session-3', updatedAt: now - 60 * 60 * 1000 },
       ]);
     });
 
-    it('should return session status', async () => {
+    it('should return session status buckets', async () => {
       const token = getToken('user-id', 'user');
 
       const response = await request(app)
@@ -1142,11 +1143,35 @@ describe('OpenClaw Routes', () => {
         .set('Authorization', `Bearer ${token}`);
 
       expect(response.status).toBe(200);
-      expect(response.body.data).toBeDefined();
-      expect(response.body.data).toHaveProperty('active');
-      expect(response.body.data).toHaveProperty('running');
-      expect(response.body.data).toHaveProperty('idle');
-      expect(response.body.data).toHaveProperty('total');
+      expect(response.body.data).toEqual(
+        expect.objectContaining({ running: 1, active: 1, idle: 1, total: 3 }),
+      );
+    });
+
+    it('should support object-shaped ws response', async () => {
+      const token = getToken('user-id', 'user');
+      sessionsListAllViaWs.mockResolvedValueOnce({
+        sessions: [{ key: 'session-1', updatedAt: Date.now() }],
+      });
+
+      const response = await request(app)
+        .get('/api/v1/openclaw/sessions/status')
+        .set('Authorization', `Bearer ${token}`);
+
+      expect(response.status).toBe(200);
+      expect(response.body.data.total).toBe(1);
+    });
+
+    it('should degrade to zero counts on websocket error', async () => {
+      const token = getToken('user-id', 'user');
+      sessionsListAllViaWs.mockRejectedValueOnce(new Error('ws down'));
+
+      const response = await request(app)
+        .get('/api/v1/openclaw/sessions/status')
+        .set('Authorization', `Bearer ${token}`);
+
+      expect(response.status).toBe(200);
+      expect(response.body.data).toEqual({ running: 0, active: 0, idle: 0, total: 0 });
     });
   });
 
@@ -1165,10 +1190,11 @@ describe('OpenClaw Routes', () => {
           return Promise.resolve({ sessions: [] });
         }
         if (method === 'usage.cost') {
-          return Promise.resolve({ totalCost: 0 });
+          return Promise.resolve({ totals: { totalCost: 0 } });
         }
         return Promise.resolve({});
       });
+      sessionsList.mockResolvedValue([]);
     });
 
     it('should return sessions list', async () => {
@@ -1179,9 +1205,6 @@ describe('OpenClaw Routes', () => {
         .set('Authorization', `Bearer ${token}`)
         .query({ limit: 10, offset: 0 });
 
-      if (response.status !== 200) {
-        console.error('Sessions list error:', response.body);
-      }
       expect(response.status).toBe(200);
       expect(response.body.data).toBeDefined();
     });
@@ -1195,6 +1218,31 @@ describe('OpenClaw Routes', () => {
         .query({ limit: 20, offset: 10 });
 
       expect(response.status).toBe(200);
+    });
+
+    it('should fall back to per-agent sessions when websocket list fails', async () => {
+      const token = getToken('user-id', 'user');
+      sessionsListAllViaWs.mockRejectedValueOnce(new Error('ws list failed'));
+      sessionsList.mockResolvedValueOnce([
+        { key: 'main', updatedAt: Date.now(), createdAt: Date.now(), status: 'running' },
+      ]);
+      global.fetch = jest.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          content: JSON.stringify({ agents: { list: [{ id: 'coo' }] } }),
+        }),
+        text: async () =>
+          JSON.stringify({ content: JSON.stringify({ agents: { list: [{ id: 'coo' }] } }) }),
+      });
+
+      const response = await request(app)
+        .get('/api/v1/openclaw/sessions')
+        .set('Authorization', `Bearer ${token}`)
+        .query({ limit: 10, offset: 0 });
+
+      expect(response.status).toBe(200);
+      expect(sessionsList).toHaveBeenCalled();
     });
   });
 

@@ -23,6 +23,7 @@ jest.mock('../../services/standupService', () => ({
 }));
 
 const pool = require('../../db/pool');
+const bcrypt = require('bcrypt');
 const { runStandupById } = require('../../services/standupService');
 const standupsRouter = require('../standups');
 
@@ -797,6 +798,116 @@ describe('Standups CRUD (Unit Tests)', () => {
 
       expect(res.status).toBe(409);
       expect(res.body.error.message).toContain('already exists');
+    });
+  });
+
+  describe('GET /api/v1/standups/:id/entries', () => {
+    it('returns 404 when standup does not exist', async () => {
+      mockAuthUser('user');
+      pool.query.mockResolvedValueOnce({ rows: [] });
+
+      const res = await request(app)
+        .get(`/api/v1/standups/${STANDUP_UUID}/entries`)
+        .set('Authorization', `Bearer ${makeToken()}`);
+
+      expect(res.status).toBe(404);
+      expect(res.body.error.message).toBe('Standup not found');
+    });
+
+    it('returns entries with agent titles when config read succeeds', async () => {
+      mockAuthUser('user');
+      pool.query
+        .mockResolvedValueOnce({ rows: [{ id: STANDUP_UUID }] })
+        .mockResolvedValueOnce({
+          rows: [{ id: ENTRY_UUID, standup_id: STANDUP_UUID, agent_id: 'coo', raw: 'raw' }],
+        });
+
+      const originalUrl = process.env.OPENCLAW_WORKSPACE_URL;
+      process.env.OPENCLAW_WORKSPACE_URL = 'http://mock-openclaw:18780';
+      global.fetch = jest.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          content: JSON.stringify({
+            agents: { list: [{ id: 'coo', identity: { title: 'Chief Ops Officer' } }] },
+          }),
+        }),
+        text: async () => 'OK',
+      });
+
+      const res = await request(app)
+        .get(`/api/v1/standups/${STANDUP_UUID}/entries`)
+        .set('Authorization', `Bearer ${makeToken()}`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.data[0].agent_title).toBe('Chief Ops Officer');
+      process.env.OPENCLAW_WORKSPACE_URL = originalUrl;
+    });
+  });
+
+  describe('GET /api/v1/standups/:id/messages', () => {
+    it('returns 404 when standup does not exist', async () => {
+      mockAuthUser('user');
+      pool.query.mockResolvedValueOnce({ rows: [] });
+
+      const res = await request(app)
+        .get(`/api/v1/standups/${STANDUP_UUID}/messages`)
+        .set('Authorization', `Bearer ${makeToken()}`);
+
+      expect(res.status).toBe(404);
+      expect(res.body.error.message).toBe('Standup not found');
+    });
+
+    it('returns ordered message list for standup', async () => {
+      mockAuthUser('user');
+      pool.query
+        .mockResolvedValueOnce({ rows: [{ id: STANDUP_UUID }] })
+        .mockResolvedValueOnce({
+          rows: [{ id: MSG_UUID, standup_id: STANDUP_UUID, kind: 'summary', content: 'done' }],
+        });
+
+      const res = await request(app)
+        .get(`/api/v1/standups/${STANDUP_UUID}/messages`)
+        .set('Authorization', `Bearer ${makeToken()}`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.data).toHaveLength(1);
+      expect(res.body.data[0].kind).toBe('summary');
+    });
+  });
+
+  describe('POST /api/v1/standups/reset', () => {
+    it('requires password confirmation', async () => {
+      mockAuthUser('admin');
+      const res = await request(app)
+        .post('/api/v1/standups/reset')
+        .set('Authorization', `Bearer ${makeToken('a', 'admin')}`)
+        .send({});
+
+      expect(res.status).toBe(400);
+      expect(res.body.error.message).toContain('Password is required');
+    });
+
+    it('returns deletion counts on successful reset', async () => {
+      mockAuthUser('admin');
+      pool.query
+        .mockResolvedValueOnce({ rows: [{ password_hash: 'hash' }] })
+        .mockResolvedValueOnce({ rows: [{ total: '2' }] })
+        .mockResolvedValueOnce({ rows: [{ total: '3' }] })
+        .mockResolvedValueOnce({ rows: [{ total: '4' }] })
+        .mockResolvedValueOnce({})
+        .mockResolvedValueOnce({})
+        .mockResolvedValueOnce({});
+      jest.spyOn(bcrypt, 'compare').mockResolvedValueOnce(true);
+
+      const res = await request(app)
+        .post('/api/v1/standups/reset')
+        .set('Authorization', `Bearer ${makeToken('a', 'admin')}`)
+        .send({ password: 'good-password' });
+
+      expect(res.status).toBe(200);
+      expect(res.body.data.success).toBe(true);
+      expect(res.body.data.deletedCount.total).toBe(9);
     });
   });
 });

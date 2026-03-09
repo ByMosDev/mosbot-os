@@ -283,6 +283,26 @@ describe('activity routes CRUD/reset', () => {
     expect(res.status).toBe(204);
   });
 
+  it('POST / rejects missing title', async () => {
+    const res = await request(app).post('/api/v1/activity').send({ description: 'd' });
+    expect(res.status).toBe(400);
+    expect(res.body.error.message).toContain('Title is required');
+  });
+
+  it('POST / rejects missing description', async () => {
+    const res = await request(app).post('/api/v1/activity').send({ title: 't' });
+    expect(res.status).toBe(400);
+    expect(res.body.error.message).toContain('Description is required');
+  });
+
+  it('POST / rejects title longer than 500 chars', async () => {
+    const res = await request(app)
+      .post('/api/v1/activity')
+      .send({ title: 'x'.repeat(501), description: 'd' });
+    expect(res.status).toBe(400);
+    expect(res.body.error.message).toContain('500 characters');
+  });
+
   it('POST / rejects invalid source', async () => {
     const res = await request(app).post('/api/v1/activity').send({
       title: 't',
@@ -291,6 +311,27 @@ describe('activity routes CRUD/reset', () => {
     });
     expect(res.status).toBe(400);
     expect(res.body.error.message).toContain('Invalid source');
+  });
+
+  it('GET /:id returns activity row', async () => {
+    pool.query.mockResolvedValueOnce({
+      rows: [{ id: 'x', title: 'log', description: 'desc' }],
+    });
+
+    const res = await request(app).get('/api/v1/activity/550e8400-e29b-41d4-a716-446655440000');
+    expect(res.status).toBe(200);
+    expect(res.body.data.title).toBe('log');
+  });
+
+  it('PUT /:id returns 404 when log does not exist', async () => {
+    pool.query.mockResolvedValueOnce({ rows: [] });
+
+    const res = await request(app)
+      .put('/api/v1/activity/550e8400-e29b-41d4-a716-446655440000')
+      .send({ title: 'Updated' });
+
+    expect(res.status).toBe(404);
+    expect(res.body.error.message).toContain('not found');
   });
 
   it('GET /feed maps non-project workspace path to /workspaces', async () => {

@@ -3,13 +3,7 @@ module.exports = {
   setupFilesAfterEnv: ['<rootDir>/jest.setup.js'],
   setupFiles: ['<rootDir>/test.setup.js'],
   testEnvironment: 'node',
-  coveragePathIgnorePatterns: [
-    '/node_modules/',
-    'src/routes/openclaw.js',
-    'src/routes/tasks.js',
-    'src/routes/standups.js',
-    'src/routes/activity.js',
-  ],
+  coveragePathIgnorePatterns: ['/node_modules/'],
   coverageThreshold: {
     global: {
       statements: 90,
