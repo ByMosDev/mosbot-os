@@ -111,6 +111,26 @@ function remapWorkspacePathPrefixes(workspacePath) {
     }
   }
 
+  // Cross-platform fallback: map any absolute ~/.openclaw/workspace* path to virtual workspace paths.
+  // Example:
+  // - /Users/<user>/.openclaw/workspace            -> /workspace
+  // - /Users/<user>/.openclaw/workspace-coding     -> /workspace-coding
+  // - /Users/<user>/.openclaw/workspace-coding/foo -> /workspace-coding/foo
+  const workspaceMarker = '/.openclaw/workspace';
+  const markerIndex = workspacePath.indexOf(workspaceMarker);
+  if (markerIndex !== -1) {
+    const suffix = workspacePath.substring(markerIndex + workspaceMarker.length);
+    if (!suffix) return '/workspace';
+
+    if (suffix.startsWith('-')) {
+      return normalizeAndValidateWorkspacePath(`/workspace${suffix}`);
+    }
+
+    if (suffix.startsWith('/')) {
+      return normalizeAndValidateWorkspacePath(`/workspace${suffix}`);
+    }
+  }
+
   return workspacePath;
 }
 
