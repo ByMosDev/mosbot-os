@@ -40,7 +40,8 @@ async function reconcileAgentsFromOpenClaw({ trigger = 'manual', actorUserId = n
        VALUES ($1, $2, 'active', true, jsonb_build_object('source', 'openclaw'))
        ON CONFLICT (agent_id)
        DO UPDATE SET
-         name = EXCLUDED.name,
+         -- Preserve custom display names set in DB/UI; only backfill if name is empty/null.
+         name = COALESCE(NULLIF(agents.name, ''), EXCLUDED.name),
          status = 'active',
          active = true,
          meta = COALESCE(agents.meta, '{}'::jsonb) || jsonb_build_object(

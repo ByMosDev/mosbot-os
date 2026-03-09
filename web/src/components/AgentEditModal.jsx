@@ -43,7 +43,7 @@ export default function AgentEditModal({ isOpen, onClose, onSave, agentId = null
   });
 
   const [availableLeaders, setAvailableLeaders] = useState([]);
-  const [availableModels, setAvailableModels] = useState(AVAILABLE_MODELS); // Fallback to hardcoded list
+  const [availableModels, setAvailableModels] = useState([]);
 
   // Load agent data, available leaders, and models when modal opens
   useEffect(() => {
@@ -110,22 +110,17 @@ export default function AgentEditModal({ isOpen, onClose, onSave, agentId = null
             provider,
           };
         });
-        setAvailableModels((prev) => {
-          const merged = [...transformedModels];
-          const existingIds = new Set(transformedModels.map((m) => m.id));
-          // Preserve any dynamically injected configured models not returned by getModels()
-          for (const model of prev) {
-            if (!existingIds.has(model.id)) {
-              merged.push(model);
-            }
-          }
-          return merged;
-        });
+        // Use only models enabled in OpenClaw config.
+        // Do not merge in hardcoded fallback lists when API models are available.
+        setAvailableModels(transformedModels);
       }
-      // If API returns empty or fails, keep AVAILABLE_MODELS fallback
+      // If API returns empty, fallback to built-in models.
+      if (models.length === 0) {
+        setAvailableModels(AVAILABLE_MODELS);
+      }
     } catch (error) {
       logger.warn('Failed to load models, using fallback', { error: error.message });
-      // Keep AVAILABLE_MODELS as fallback
+      setAvailableModels(AVAILABLE_MODELS);
     }
   };
 

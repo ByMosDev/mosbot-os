@@ -37,5 +37,9 @@ describe('agentReconciliationService', () => {
 
     expect(result.discoveredIds).toEqual(expect.arrayContaining(['coo', 'cto', 'main']));
     expect(result.deactivated).toBe(1);
+
+    // Reconcile should preserve custom DB names (it should not blindly overwrite name)
+    const upsertSql = pool.query.mock.calls[0][0];
+    expect(upsertSql).toContain("COALESCE(NULLIF(agents.name, ''), EXCLUDED.name)");
   });
 });
