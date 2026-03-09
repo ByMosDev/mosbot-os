@@ -259,6 +259,11 @@ export default function Agents() {
               </h3>
             </div>
             <div className="flex items-center gap-2 ml-auto">
+              {leader.isDefault && (
+                <span className="px-2 py-0.5 bg-primary-600/20 text-primary-300 border border-primary-500/30 rounded text-[10px] font-semibold uppercase tracking-wide">
+                  Default
+                </span>
+              )}
               {canEdit && (
                 <button
                   onClick={() => handleEditAgent(leader.id)}
