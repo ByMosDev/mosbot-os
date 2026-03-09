@@ -42,8 +42,16 @@ async function reconcileAgentsFromOpenClaw({ trigger = 'manual', actorUserId = n
        DO UPDATE SET
          -- Preserve custom display names set in DB/UI; only backfill if name is empty/null.
          name = COALESCE(NULLIF(agents.name, ''), EXCLUDED.name),
-         status = 'active',
-         active = true,
+         -- Preserve explicit non-active lifecycle states chosen in UI.
+         -- Otherwise mark discovered agents active.
+         status = CASE
+           WHEN agents.status IN ('scaffolded', 'deprecated') THEN agents.status
+           ELSE 'active'
+         END,
+         active = CASE
+           WHEN agents.status IN ('scaffolded', 'deprecated') THEN false
+           ELSE true
+         END,
          meta = COALESCE(agents.meta, '{}'::jsonb) || jsonb_build_object(
            'source', 'openclaw',
            'lastSeenInOpenClawAt', NOW()
