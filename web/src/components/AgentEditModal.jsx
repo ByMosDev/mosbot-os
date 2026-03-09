@@ -110,7 +110,17 @@ export default function AgentEditModal({ isOpen, onClose, onSave, agentId = null
             provider,
           };
         });
-        setAvailableModels(transformedModels);
+        setAvailableModels((prev) => {
+          const merged = [...transformedModels];
+          const existingIds = new Set(transformedModels.map((m) => m.id));
+          // Preserve any dynamically injected configured models not returned by getModels()
+          for (const model of prev) {
+            if (!existingIds.has(model.id)) {
+              merged.push(model);
+            }
+          }
+          return merged;
+        });
       }
       // If API returns empty or fails, keep AVAILABLE_MODELS fallback
     } catch (error) {
@@ -122,86 +132,64 @@ export default function AgentEditModal({ isOpen, onClose, onSave, agentId = null
   const loadAgentData = async () => {
     setIsLoading(true);
     try {
-      // Fetch agents.json (leadership/org data) and the raw openclaw.json (full agent config)
-      // in parallel. We need the raw openclaw.json because the normalized /openclaw/agents
-      // endpoint strips model, identity, and heartbeat fields — it's display-only.
-      const [agentsConfigResult, rawConfigResult] = await Promise.allSettled([
+      // Fetch agents.json (leadership/org data) and the enriched /openclaw/agents list
+      // (which now includes model, identity, heartbeat resolved from agents.list + agents.defaults).
+      // The backend handles JSON5 parsing and default resolution — we never read raw files here.
+      const [agentsConfigResult, agentsListResult] = await Promise.allSettled([
         api.get('/openclaw/agents/config'),
-        api.get('/openclaw/workspace/files/content', { params: { path: '/openclaw.json' } }),
+        api.get('/openclaw/agents'),
       ]);
 
       let agentsConfig = null;
-      let rawAgentEntry = null;
+      let agentEntry = null;
 
-      if (agentsConfigResult.status === 'fulfilled' && agentsConfigResult.value) {
+      if (agentsConfigResult.status === 'fulfilled') {
         agentsConfig = agentsConfigResult.value.data?.data || null;
       } else {
         logger.warn('Failed to load agents config', { error: agentsConfigResult.reason?.message });
       }
 
-      if (rawConfigResult.status === 'fulfilled' && rawConfigResult.value) {
-        try {
-          const raw = rawConfigResult.value.data?.data?.content || '{}';
-          const openclawConfig = JSON.parse(raw);
-          const agentsDefaults = openclawConfig?.agents?.defaults || {};
-          const agentsList = openclawConfig?.agents?.list || [];
-          const agentSpecific = agentsList.find((a) => a.id === agentId) || {};
-
-          // Merge: defaults first, then agent-specific config on top.
-          // Main agent is often absent from agents.list and inherits entirely from defaults.
-          // Priority: agent-specific > agents.defaults > nothing
-          const resolvedModel = agentSpecific.model?.primary
-            ? agentSpecific.model
-            : agentsDefaults.model || null;
-
-          rawAgentEntry = {
-            workspace: agentSpecific.workspace || agentsDefaults.workspace || null,
-            identity: agentSpecific.identity || null,
-            heartbeat: agentSpecific.heartbeat || null,
-            model: resolvedModel,
-          };
-        } catch (parseErr) {
-          logger.warn('Failed to parse openclaw.json', { error: parseErr.message });
-        }
+      if (agentsListResult.status === 'fulfilled') {
+        const list = agentsListResult.value.data?.data || [];
+        agentEntry = list.find((a) => a.id === agentId) || null;
       } else {
-        logger.warn('Failed to load raw openclaw config', { error: rawConfigResult.reason?.message });
+        logger.warn('Failed to load agents list', { error: agentsListResult.reason?.message });
       }
 
-      // If both failed, bail
-      if (!agentsConfig && !rawAgentEntry) {
+      if (!agentsConfig && !agentEntry) {
         showToast('Failed to load agent configuration. Please try again.', 'error');
         onClose();
         return;
       }
 
-      // Leadership entry from agents.json (display/org fields)
       const leadershipEntry = agentsConfig
         ? (agentsConfig.leadership || []).find((l) => l.id === agentId)
         : null;
 
-      if (!leadershipEntry && !rawAgentEntry) {
+      if (!leadershipEntry && !agentEntry) {
         showToast('Agent not found', 'error');
         onClose();
         return;
       }
 
-      // Pull model values from raw openclaw.json config (source of truth).
-      // Do NOT fall back to DEFAULT_PRIMARY_MODEL — if a field isn't configured, show it blank.
-      const configuredModelPrimary = rawAgentEntry?.model?.primary ?? '';
-      const configuredFallback1 = rawAgentEntry?.model?.fallbacks?.[0] ?? '';
-      const configuredFallback2 = rawAgentEntry?.model?.fallbacks?.[1] ?? '';
+      // Model values from enriched agent entry (already merged with agents.defaults server-side).
+      // Use ?? '' so unset fields show blank — never fall back to a hardcoded UI default.
+      const configuredModelPrimary = agentEntry?.model?.primary ?? '';
+      const configuredFallback1   = agentEntry?.model?.fallbacks?.[0] ?? '';
+      const configuredFallback2   = agentEntry?.model?.fallbacks?.[1] ?? '';
+      const configuredHbModel     = agentEntry?.heartbeat?.model ?? '';
 
-      // If the configured model isn't in the available models list, add it dynamically
-      // so the select renders the correct value instead of showing a mismatch.
-      if (configuredModelPrimary) {
+      // Inject any configured model IDs that aren't in AVAILABLE_MODELS so the selects
+      // render the correct value. Do this after loadModels() may have run by merging here.
+      const extraModels = [configuredModelPrimary, configuredFallback1, configuredFallback2, configuredHbModel]
+        .filter(Boolean)
+        .map((id) => ({ id, name: id, alias: id, provider: 'configured' }));
+
+      if (extraModels.length > 0) {
         setAvailableModels((prev) => {
-          if (!prev.find((m) => m.id === configuredModelPrimary)) {
-            return [
-              ...prev,
-              { id: configuredModelPrimary, name: configuredModelPrimary, alias: configuredModelPrimary, provider: 'Unknown' },
-            ];
-          }
-          return prev;
+          const existingIds = new Set(prev.map((m) => m.id));
+          const toAdd = extraModels.filter((m) => !existingIds.has(m.id));
+          return toAdd.length > 0 ? [...prev, ...toAdd] : prev;
         });
       }
 
@@ -210,24 +198,24 @@ export default function AgentEditModal({ isOpen, onClose, onSave, agentId = null
         id: leadershipEntry?.id || agentId,
         title: leadershipEntry?.title || '',
         label: leadershipEntry?.label || `mosbot-${agentId}`,
-        displayName: leadershipEntry?.displayName || rawAgentEntry?.identity?.name || '',
-        description: leadershipEntry?.description || rawAgentEntry?.identity?.theme || '',
+        displayName: leadershipEntry?.displayName || agentEntry?.identity?.name || '',
+        description: leadershipEntry?.description || agentEntry?.identity?.theme || '',
         status: leadershipEntry?.status || 'active',
         reportsTo: leadershipEntry?.reportsTo || '',
 
-        // OpenClaw config fields from raw openclaw.json
-        workspace: rawAgentEntry?.workspace || `/home/node/.openclaw/workspace-${agentId}`,
-        identityName: rawAgentEntry?.identity?.name || leadershipEntry?.displayName || '',
-        identityTheme: rawAgentEntry?.identity?.theme || leadershipEntry?.description || '',
-        identityEmoji: rawAgentEntry?.identity?.emoji || leadershipEntry?.emoji || '🤖',
+        // OpenClaw config fields — sourced from enriched /openclaw/agents response
+        workspace: agentEntry?.workspace || '',
+        identityName: agentEntry?.identity?.name || leadershipEntry?.displayName || '',
+        identityTheme: agentEntry?.identity?.theme || leadershipEntry?.description || '',
+        identityEmoji: agentEntry?.identity?.emoji || agentEntry?.icon || leadershipEntry?.emoji || '🤖',
         modelPrimary: configuredModelPrimary,
         modelFallback1: configuredFallback1,
         modelFallback2: configuredFallback2,
 
-        // Heartbeat from raw openclaw.json
-        heartbeatEnabled: !!rawAgentEntry?.heartbeat,
-        heartbeatEvery: rawAgentEntry?.heartbeat?.every || '60m',
-        heartbeatModel: rawAgentEntry?.heartbeat?.model || '',
+        // Heartbeat
+        heartbeatEnabled: !!agentEntry?.heartbeat,
+        heartbeatEvery: agentEntry?.heartbeat?.every || '60m',
+        heartbeatModel: configuredHbModel,
       });
     } catch (error) {
       logger.error('Failed to load agent data', error, {
@@ -257,6 +245,11 @@ export default function AgentEditModal({ isOpen, onClose, onSave, agentId = null
 
     if (!formData.displayName.trim()) {
       showToast('Display name is required', 'error');
+      return;
+    }
+
+    if (formData.status !== 'human' && !formData.modelPrimary) {
+      showToast('Primary model is required for non-human agents', 'error');
       return;
     }
 
@@ -528,6 +521,7 @@ export default function AgentEditModal({ isOpen, onClose, onSave, agentId = null
                             disabled={isSaving}
                             className="input-field w-full disabled:opacity-50"
                           >
+                            <option value="">Select a model…</option>
                             {availableModels.map((model) => (
                               <option key={model.id} value={model.id}>
                                 {model.alias} ({model.id})
@@ -630,6 +624,7 @@ export default function AgentEditModal({ isOpen, onClose, onSave, agentId = null
                                 disabled={isSaving}
                                 className="input-field w-full disabled:opacity-50"
                               >
+                                <option value="">Use primary model (default)</option>
                                 {availableModels.map((model) => (
                                   <option key={model.id} value={model.id}>
                                     {model.alias} ({model.id})

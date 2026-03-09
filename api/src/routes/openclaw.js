@@ -624,26 +624,44 @@ router.get('/agents', requireAuth, async (req, res, next) => {
       const data = await makeOpenClawRequest('GET', '/files/content?path=/openclaw.json');
       const config = parseOpenClawConfig(data.content);
 
-      // Extract agents list from config
+      // Extract agents list and defaults from config
       const agentsList = config?.agents?.list || [];
+      const agentsDefaults = config?.agents?.defaults || {};
       const filteredAgents = agentsList;
 
-      // Transform to include workspace path info
+      // Transform to include workspace path info and full config fields (model, identity, heartbeat).
+      // Resolve model: agent-specific config takes priority, then agents.defaults.
+      // This ensures agents not in agents.list (e.g. main) still get correct values.
       let agents = filteredAgents.map((agent) => ({
         id: agent.id,
         name: agent.identity?.name || agent.name || agent.id,
         label: agent.identity?.name || agent.name || agent.id,
         title: agent.identity?.title || null,
         description: agent.identity?.theme || `${agent.identity?.name || agent.id} workspace`,
-        icon: agent.identity?.emoji || '🤖',
+        icon: agent.identity?.emoji || agentsDefaults.identity?.emoji || '🤖',
         workspace: resolveAgentWorkspacePath(agent),
         isDefault: agent.default === true,
+        // Full config fields for the edit modal — agent-specific overrides defaults
+        model: agent.model?.primary ? agent.model : (agentsDefaults.model || null),
+        identity: agent.identity || null,
+        heartbeat: agent.heartbeat || null,
       }));
 
       // OpenClaw always has an implicit "main" agent session, even when it is not explicitly
       // listed in openclaw.json agents.list. Ensure dashboards always see a main entry.
+      // Populate main's config from agents.defaults since it has no agents.list entry.
       if (!agents.some((a) => a.id === 'main')) {
-        agents.push(buildImplicitMainAgent({ isDefault: agents.length === 0 }));
+        const mainWorkspace = agentsDefaults.workspace
+          ? resolveAgentWorkspacePath({ workspace: agentsDefaults.workspace, default: true })
+          : '/workspace';
+        agents.push(buildImplicitMainAgent({
+          isDefault: agents.length === 0,
+          icon: agentsDefaults.identity?.emoji || '🦞',
+          workspace: mainWorkspace,
+          model: agentsDefaults.model || null,
+          identity: agentsDefaults.identity || null,
+          heartbeat: null,
+        }));
       }
 
       // Enrich agent names from users table (users.name is the canonical display name)
