@@ -8,9 +8,10 @@ import {
   ExclamationTriangleIcon,
   PencilIcon,
   PlusIcon,
+  ArrowPathIcon,
 } from '@heroicons/react/24/outline';
 import Header from '../components/Header';
-import { getActiveSubagentSessions, getAgentsConfig } from '../api/client';
+import { getActiveSubagentSessions, getAgentsConfig, syncAgentsFromOpenClaw } from '../api/client';
 import { useAuthStore } from '../stores/authStore';
 import AgentEditModal from '../components/AgentEditModal';
 import logger from '../utils/logger';
@@ -46,6 +47,7 @@ export default function Agents() {
   const [showAgentModal, setShowAgentModal] = useState(false);
   const [selectedAgentId, setSelectedAgentId] = useState(null);
   const [agentModalMode, setAgentModalMode] = useState('edit'); // 'edit' or 'create'
+  const [isSyncingAgents, setIsSyncingAgents] = useState(false);
   const pollingRef = useRef(null);
   const { isAdmin } = useAuthStore();
 
@@ -132,6 +134,20 @@ export default function Agents() {
   const handleAgentModalSave = async () => {
     // Reload config after agent modal saves
     await loadConfig();
+  };
+
+  const handleSyncAgents = async () => {
+    setIsSyncingAgents(true);
+    try {
+      await syncAgentsFromOpenClaw();
+      await loadConfig();
+      setConfigError(null);
+    } catch (err) {
+      logger.error('Failed to reconcile agents from OpenClaw', err);
+      setConfigError(err?.response?.data?.error?.message || err.message || 'Failed to sync agents');
+    } finally {
+      setIsSyncingAgents(false);
+    }
   };
 
   const handleEditAgent = (agentId) => {
@@ -243,6 +259,11 @@ export default function Agents() {
               </h3>
             </div>
             <div className="flex items-center gap-2 ml-auto">
+              {leader.isDefault && (
+                <span className="px-2 py-0.5 bg-primary-600/20 text-primary-300 border border-primary-500/30 rounded text-[10px] font-semibold uppercase tracking-wide">
+                  Default
+                </span>
+              )}
               {canEdit && (
                 <button
                   onClick={() => handleEditAgent(leader.id)}
@@ -410,10 +431,21 @@ export default function Agents() {
         onRefresh={handleRefresh}
       >
         {isAdmin() && (
-          <button onClick={handleAddAgent} className="btn-primary flex items-center gap-2">
-            <PlusIcon className="w-4 h-4" />
-            Add Agent
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handleSyncAgents}
+              disabled={isSyncingAgents}
+              className="btn-secondary flex items-center gap-2 disabled:opacity-50"
+              title="Reconcile agents from OpenClaw config"
+            >
+              <ArrowPathIcon className={`w-4 h-4 ${isSyncingAgents ? 'animate-spin' : ''}`} />
+              {isSyncingAgents ? 'Syncing…' : 'Sync from OpenClaw'}
+            </button>
+            <button onClick={handleAddAgent} className="btn-primary flex items-center gap-2">
+              <PlusIcon className="w-4 h-4" />
+              Add Agent
+            </button>
+          </div>
         )}
       </Header>
 

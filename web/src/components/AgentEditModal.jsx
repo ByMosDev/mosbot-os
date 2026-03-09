@@ -24,7 +24,7 @@ export default function AgentEditModal({ isOpen, onClose, onSave, agentId = null
     label: '',
     displayName: '',
     description: '',
-    status: 'scaffolded', // human, scaffolded, active, deprecated
+    status: 'active',
     reportsTo: '',
 
     // From openclaw.json agents.list
@@ -43,7 +43,7 @@ export default function AgentEditModal({ isOpen, onClose, onSave, agentId = null
   });
 
   const [availableLeaders, setAvailableLeaders] = useState([]);
-  const [availableModels, setAvailableModels] = useState(AVAILABLE_MODELS); // Fallback to hardcoded list
+  const [availableModels, setAvailableModels] = useState([]);
 
   // Load agent data, available leaders, and models when modal opens
   useEffect(() => {
@@ -68,7 +68,7 @@ export default function AgentEditModal({ isOpen, onClose, onSave, agentId = null
       label: '',
       displayName: '',
       description: '',
-      status: 'scaffolded',
+      status: 'active',
       reportsTo: '',
       workspace: '',
       identityName: '',
@@ -110,22 +110,17 @@ export default function AgentEditModal({ isOpen, onClose, onSave, agentId = null
             provider,
           };
         });
-        setAvailableModels((prev) => {
-          const merged = [...transformedModels];
-          const existingIds = new Set(transformedModels.map((m) => m.id));
-          // Preserve any dynamically injected configured models not returned by getModels()
-          for (const model of prev) {
-            if (!existingIds.has(model.id)) {
-              merged.push(model);
-            }
-          }
-          return merged;
-        });
+        // Use only models enabled in OpenClaw config.
+        // Do not merge in hardcoded fallback lists when API models are available.
+        setAvailableModels(transformedModels);
       }
-      // If API returns empty or fails, keep AVAILABLE_MODELS fallback
+      // If API returns empty, fallback to built-in models.
+      if (models.length === 0) {
+        setAvailableModels(AVAILABLE_MODELS);
+      }
     } catch (error) {
       logger.warn('Failed to load models, using fallback', { error: error.message });
-      // Keep AVAILABLE_MODELS as fallback
+      setAvailableModels(AVAILABLE_MODELS);
     }
   };
 
@@ -200,7 +195,7 @@ export default function AgentEditModal({ isOpen, onClose, onSave, agentId = null
         label: leadershipEntry?.label || `mosbot-${agentId}`,
         displayName: leadershipEntry?.displayName || agentEntry?.identity?.name || '',
         description: leadershipEntry?.description || agentEntry?.identity?.theme || '',
-        status: leadershipEntry?.status || 'active',
+        status: 'active',
         reportsTo: leadershipEntry?.reportsTo || '',
 
         // OpenClaw config fields — sourced from enriched /openclaw/agents response
@@ -248,7 +243,7 @@ export default function AgentEditModal({ isOpen, onClose, onSave, agentId = null
       return;
     }
 
-    if (formData.status !== 'human' && !formData.modelPrimary) {
+    if (!formData.modelPrimary) {
       showToast('Primary model is required for non-human agents', 'error');
       return;
     }
@@ -434,17 +429,16 @@ export default function AgentEditModal({ isOpen, onClose, onSave, agentId = null
                     </div>
 
                     <div>
-                      <label className="block text-sm font-medium text-dark-300 mb-2">Status</label>
+                      <label className="block text-sm font-medium text-dark-300 mb-2">
+                        Status <span className="text-xs text-dark-500">(lifecycle modes temporarily disabled)</span>
+                      </label>
                       <select
                         value={formData.status}
                         onChange={(e) => handleChange('status', e.target.value)}
-                        disabled={isSaving}
+                        disabled
                         className="input-field w-full disabled:opacity-50"
                       >
-                        <option value="scaffolded">Scaffolded</option>
                         <option value="active">Active</option>
-                        <option value="deprecated">Deprecated</option>
-                        <option value="human">Human</option>
                       </select>
                     </div>
 
@@ -471,8 +465,8 @@ export default function AgentEditModal({ isOpen, onClose, onSave, agentId = null
                   </div>
                 </div>
 
-                {/* Skip OpenClaw config for human agents */}
-                {formData.status !== 'human' && (
+                {/* OpenClaw config */}
+                {(
                   <>
                     {/* OpenClaw Config Section */}
                     <div>
@@ -483,16 +477,14 @@ export default function AgentEditModal({ isOpen, onClose, onSave, agentId = null
                         <div className="col-span-2">
                           <label className="block text-sm font-medium text-dark-300 mb-2">
                             Workspace Path
-                            {agentId === 'main' && (
-                              <span className="ml-2 text-xs text-dark-500 font-normal">(read-only for main agent)</span>
-                            )}
+                            <span className="ml-2 text-xs text-dark-500 font-normal">(auto-managed)</span>
                           </label>
                           <input
                             type="text"
                             value={formData.workspace}
-                            onChange={(e) => handleChange('workspace', e.target.value)}
-                            disabled={isSaving || agentId === 'main'}
-                            placeholder="/home/node/.openclaw/workspace-myagent"
+                            readOnly
+                            disabled
+                            placeholder="Auto-generated by OpenClaw from agents.defaults.workspace"
                             className="input-field w-full disabled:opacity-50 disabled:cursor-not-allowed"
                           />
                         </div>
