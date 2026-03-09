@@ -4207,11 +4207,18 @@ router.put('/config', requireAuth, requireOwnerOrAdmin, async (req, res, next) =
         userId: req.user.id,
       });
     } catch (backupErr) {
-      // Backup failure is non-fatal: log a warning but continue with the apply
-      logger.warn('Failed to write OpenClaw config backup snapshot (non-fatal)', {
-        error: backupErr.message,
-        userId: req.user.id,
-      });
+      // Backup failure is non-fatal: log and continue with apply.
+      // During rollout, migration may not exist yet (42P01), which is expected.
+      if (backupErr.code === '42P01') {
+        logger.info('Config history table not available yet; skipping backup snapshot', {
+          userId: req.user.id,
+        });
+      } else {
+        logger.warn('Failed to write OpenClaw config backup snapshot (non-fatal)', {
+          error: backupErr.message,
+          userId: req.user.id,
+        });
+      }
     }
 
     // Step 4: apply via Gateway RPC config.apply (validates schema + restarts gateway)
@@ -4309,7 +4316,8 @@ router.get('/config/backups', requireAuth, requireOwnerOrAdmin, async (req, res,
     logger.info('Listing OpenClaw config backups (DB)', { userId: req.user.id });
 
     const result = await pool.query(
-      `SELECT id, created_at, note, actor_user_id, base_hash, new_hash, raw_config
+      `SELECT id, created_at, note, actor_user_id, base_hash, new_hash,
+              octet_length(raw_config) AS size_bytes
        FROM openclaw_config_history
        ORDER BY created_at DESC
        LIMIT 200`,
@@ -4322,7 +4330,7 @@ router.get('/config/backups', requireAuth, requireOwnerOrAdmin, async (req, res,
         id: row.id,
         path: `db:${row.id}`,
         name: `openclaw-${safeTimestamp}.json5`,
-        size: Buffer.byteLength(row.raw_config || '', 'utf8'),
+        size: Number(row.size_bytes || 0),
         modified: createdIso,
         created: createdIso,
         note: row.note || null,
@@ -4364,7 +4372,7 @@ router.get('/config/backups/content', requireAuth, requireOwnerOrAdmin, async (r
     if (!uuidRegex.test(idCandidate)) {
       return res.status(400).json({
         error: {
-          message: 'Invalid backup id. Expected db:<uuid>.',
+          message: 'Invalid backup id. Expected db:<uuid> or <uuid>.',
           status: 400,
           code: 'INVALID_BACKUP_ID',
         },
