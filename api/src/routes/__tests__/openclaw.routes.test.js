@@ -699,38 +699,27 @@ describe('OpenClaw Routes', () => {
       expect(response.body.data.leadership.some((l) => l.id === 'main')).toBe(true);
     });
 
-    it('should auto-generate agents config from agents.list when agents.json is missing', async () => {
+    it('should derive leadership from openclaw agents.list', async () => {
       const token = getToken('user-id', 'user');
 
-      let callCount = 0;
-      global.fetch = jest.fn().mockImplementation(async () => {
-        callCount++;
-        // First call: agents.json → 404
-        if (callCount === 1) {
-          const err = new Error('File not found');
-          err.status = 404;
-          throw err;
-        }
-        // Second call: openclaw.json → agents.list
-        return {
-          ok: true,
-          status: 200,
-          json: async () => ({
-            content: JSON.stringify({
-              agents: {
-                list: [
-                  {
-                    id: 'orchestrator',
-                    identity: { name: 'MosBot', theme: 'Orchestration', emoji: '🤖' },
-                    model: { primary: 'openrouter/anthropic/claude-sonnet-4.5' },
-                  },
-                ],
-              },
-            }),
+      global.fetch = jest.fn().mockImplementation(async () => ({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          content: JSON.stringify({
+            agents: {
+              list: [
+                {
+                  id: 'orchestrator',
+                  identity: { name: 'MosBot', theme: 'Orchestration', emoji: '🤖' },
+                  model: { primary: 'openrouter/anthropic/claude-sonnet-4.5' },
+                },
+              ],
+            },
           }),
-          text: async () => 'OK',
-        };
-      });
+        }),
+        text: async () => 'OK',
+      }));
 
       const response = await request(app)
         .get('/api/v1/openclaw/agents/config')

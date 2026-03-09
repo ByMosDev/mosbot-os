@@ -13,7 +13,6 @@ const { recordActivityLogEventSafe } = require('../services/activityLogService')
 const { parseOpenClawConfig } = require('../utils/configParser');
 const { getJwtSecret } = require('../utils/jwt');
 const { ensureDocsLinkIfMissing } = require('../services/docsLinkReconciliationService');
-const { reconcileAgentsFromOpenClaw } = require('../services/agentReconciliationService');
 
 const BUILTIN_OPENCLAW_REMAP_PREFIXES = [
   '/home/node/.openclaw/workspace',
@@ -733,14 +732,8 @@ router.get('/agents/config', requireAuth, async (req, res, next) => {
   try {
     logger.info('Fetching agents configuration', { userId: req.user.id });
 
-    // Best-effort reconcile so DB metadata stays aligned with OpenClaw source-of-truth.
-    try {
-      await reconcileAgentsFromOpenClaw({ trigger: 'read' });
-    } catch (reconcileErr) {
-      logger.warn('Agent reconcile failed during agents/config fetch', {
-        error: reconcileErr.message,
-      });
-    }
+    // Reconcile runs on startup + interval + explicit /admin/agents/sync.
+    // Keep this read path lightweight (avoid reconcile-on-read latency amplification).
 
     let openclawConfig = {};
     try {
@@ -868,6 +861,10 @@ router.put('/agents/config/:agentId', requireAuth, requireAdmin, async (req, res
       });
     }
 
+    const isHuman = agentData.status === 'human';
+    const dbStatus = isHuman ? 'active' : (agentData.status || 'active');
+    const dbActive = dbStatus !== 'deprecated' && dbStatus !== 'scaffolded';
+
     // Upsert DB metadata (replaces agents.json leadership writes)
     await pool.query(
       `INSERT INTO agents (agent_id, name, title, status, reports_to, meta, active)
@@ -885,19 +882,18 @@ router.put('/agents/config/:agentId', requireAuth, requireAdmin, async (req, res
         agentId,
         agentData.displayName,
         agentData.title || agentData.identityName || agentId,
-        agentData.status || 'active',
+        dbStatus,
         agentData.reportsTo || null,
         JSON.stringify({
           label: agentData.label || `agent:${agentId}:main`,
           description: agentData.description || '',
           emoji: agentData.identityEmoji || null,
         }),
-        agentData.status !== 'deprecated',
+        dbActive,
       ],
     );
 
     // Update openclaw runtime config for non-human agents only
-    const isHuman = agentData.status === 'human';
     if (!isHuman) {
       const agentIndex = openclawAgentsList.findIndex((a) => a.id === agentId);
       if (agentIndex >= 0) {
@@ -1000,6 +996,8 @@ router.post('/agents/config', requireAuth, requireAdmin, async (req, res, next) 
     if (!Array.isArray(openclawConfig.agents.list)) openclawConfig.agents.list = [];
 
     const isHuman = agentData.status === 'human';
+    const dbStatus = isHuman ? 'active' : (agentData.status || 'scaffolded');
+    const dbActive = dbStatus !== 'deprecated' && dbStatus !== 'scaffolded';
 
     if (!isHuman && openclawConfig.agents.list.some((a) => a.id === agentData.id)) {
       return res.status(409).json({
@@ -1028,14 +1026,14 @@ router.post('/agents/config', requireAuth, requireAdmin, async (req, res, next) 
         agentData.id,
         agentData.displayName,
         agentData.title || agentData.identityName || agentData.id,
-        agentData.status || 'scaffolded',
+        dbStatus,
         agentData.reportsTo || null,
         JSON.stringify({
           label: agentData.label || `agent:${agentData.id}:main`,
           description: agentData.description || '',
           emoji: agentData.identityEmoji || null,
         }),
-        agentData.status !== 'deprecated',
+        dbActive,
       ],
     );
 
