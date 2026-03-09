@@ -60,6 +60,8 @@ export default function AgentEditModal({ isOpen, onClose, onSave, agentId = null
   }, [isOpen, agentId, isCreateMode]);
 
   const resetForm = () => {
+    // Create mode: seed with sensible defaults
+    // Edit mode: never call this — loadAgentData populates from live config
     setFormData({
       id: '',
       title: '',
@@ -120,75 +122,97 @@ export default function AgentEditModal({ isOpen, onClose, onSave, agentId = null
   const loadAgentData = async () => {
     setIsLoading(true);
     try {
-      // Use normalized API endpoints that synthesize implicit defaults (e.g. main)
-      // instead of reading raw files directly.
-      const [agentsConfigResult, agentsResult] = await Promise.allSettled([
+      // Fetch agents.json (leadership/org data) and the raw openclaw.json (full agent config)
+      // in parallel. We need the raw openclaw.json because the normalized /openclaw/agents
+      // endpoint strips model, identity, and heartbeat fields — it's display-only.
+      const [agentsConfigResult, rawConfigResult] = await Promise.allSettled([
         api.get('/openclaw/agents/config'),
-        api.get('/openclaw/agents'),
+        api.get('/openclaw/workspace/files/content', { params: { path: '/openclaw.json' } }),
       ]);
 
       let agentsConfig = null;
-      let openclawAgents = null;
+      let rawAgentEntry = null;
 
       if (agentsConfigResult.status === 'fulfilled' && agentsConfigResult.value) {
         agentsConfig = agentsConfigResult.value.data?.data || null;
-      } else if (agentsConfigResult.status === 'rejected') {
+      } else {
         logger.warn('Failed to load agents config', { error: agentsConfigResult.reason?.message });
       }
 
-      if (agentsResult.status === 'fulfilled' && agentsResult.value) {
-        openclawAgents = agentsResult.value.data?.data || null;
-      } else if (agentsResult.status === 'rejected') {
-        logger.warn('Failed to load agents list', { error: agentsResult.reason?.message });
+      if (rawConfigResult.status === 'fulfilled' && rawConfigResult.value) {
+        try {
+          const raw = rawConfigResult.value.data?.data?.content || '{}';
+          const openclawConfig = JSON.parse(raw);
+          const agentsList = openclawConfig?.agents?.list || [];
+          rawAgentEntry = agentsList.find((a) => a.id === agentId) || null;
+        } catch (parseErr) {
+          logger.warn('Failed to parse openclaw.json', { error: parseErr.message });
+        }
+      } else {
+        logger.warn('Failed to load raw openclaw config', { error: rawConfigResult.reason?.message });
       }
 
-      // If both API calls failed, show error
-      if (!agentsConfig && !openclawAgents) {
+      // If both failed, bail
+      if (!agentsConfig && !rawAgentEntry) {
         showToast('Failed to load agent configuration. Please try again.', 'error');
         onClose();
         return;
       }
 
-      // Find agent in agents config leadership
+      // Leadership entry from agents.json (display/org fields)
       const leadershipEntry = agentsConfig
         ? (agentsConfig.leadership || []).find((l) => l.id === agentId)
         : null;
 
-      // Find agent in normalized OpenClaw agents list
-      const agentEntry = Array.isArray(openclawAgents)
-        ? openclawAgents.find((a) => a.id === agentId)
-        : null;
-
-      if (!leadershipEntry && !agentEntry) {
+      if (!leadershipEntry && !rawAgentEntry) {
         showToast('Agent not found', 'error');
         onClose();
         return;
       }
 
-      // Merge data from both sources
+      // Pull model values from raw openclaw.json config (source of truth).
+      // Do NOT fall back to DEFAULT_PRIMARY_MODEL — if a field isn't configured, show it blank.
+      const configuredModelPrimary = rawAgentEntry?.model?.primary ?? '';
+      const configuredFallback1 = rawAgentEntry?.model?.fallbacks?.[0] ?? '';
+      const configuredFallback2 = rawAgentEntry?.model?.fallbacks?.[1] ?? '';
+
+      // If the configured model isn't in the available models list, add it dynamically
+      // so the select renders the correct value instead of showing a mismatch.
+      if (configuredModelPrimary) {
+        setAvailableModels((prev) => {
+          if (!prev.find((m) => m.id === configuredModelPrimary)) {
+            return [
+              ...prev,
+              { id: configuredModelPrimary, name: configuredModelPrimary, alias: configuredModelPrimary, provider: 'Unknown' },
+            ];
+          }
+          return prev;
+        });
+      }
+
       setFormData({
-        // Agents config data
+        // Org/display fields from agents.json leadership
         id: leadershipEntry?.id || agentId,
         title: leadershipEntry?.title || '',
         label: leadershipEntry?.label || `mosbot-${agentId}`,
-        displayName: leadershipEntry?.displayName || agentEntry?.identity?.name || '',
-        description: leadershipEntry?.description || agentEntry?.identity?.theme || '',
-        status: leadershipEntry?.status || 'scaffolded',
+        displayName: leadershipEntry?.displayName || rawAgentEntry?.identity?.name || '',
+        description: leadershipEntry?.description || rawAgentEntry?.identity?.theme || '',
+        status: leadershipEntry?.status || 'active',
         reportsTo: leadershipEntry?.reportsTo || '',
 
-        // OpenClaw config data
-        workspace: agentEntry?.workspace || `/home/node/.openclaw/workspace-${agentId}`,
-        identityName: agentEntry?.identity?.name || leadershipEntry?.displayName || '',
-        identityTheme: agentEntry?.identity?.theme || leadershipEntry?.description || '',
-        identityEmoji: agentEntry?.identity?.emoji || '🤖',
-        modelPrimary: agentEntry?.model?.primary || DEFAULT_PRIMARY_MODEL,
-        modelFallback1: agentEntry?.model?.fallbacks?.[0] || '',
-        modelFallback2: agentEntry?.model?.fallbacks?.[1] || '',
+        // OpenClaw config fields from raw openclaw.json
+        workspace: rawAgentEntry?.workspace || `/home/node/.openclaw/workspace-${agentId}`,
+        identityName: rawAgentEntry?.identity?.name || leadershipEntry?.displayName || '',
+        identityTheme: rawAgentEntry?.identity?.theme || leadershipEntry?.description || '',
+        identityEmoji: rawAgentEntry?.identity?.emoji || '🤖',
+        modelPrimary: configuredModelPrimary,
+        modelFallback1: configuredFallback1,
+        modelFallback2: configuredFallback2,
 
-        // Heartbeat
-        heartbeatEnabled: !!agentEntry?.heartbeat,
-        heartbeatEvery: agentEntry?.heartbeat?.every || '60m',
-        heartbeatModel: agentEntry?.heartbeat?.model || DEFAULT_HEARTBEAT_MODEL,
+        // Heartbeat from raw openclaw.json
+        heartbeatEnabled: !!rawAgentEntry?.heartbeat,
+        heartbeatEvery: rawAgentEntry?.heartbeat?.every || '60m',
+        heartbeatModel: rawAgentEntry?.heartbeat?.model || '',
       });
     } catch (error) {
       logger.error('Failed to load agent data', error, {
@@ -451,14 +475,17 @@ export default function AgentEditModal({ isOpen, onClose, onSave, agentId = null
                         <div className="col-span-2">
                           <label className="block text-sm font-medium text-dark-300 mb-2">
                             Workspace Path
+                            {agentId === 'main' && (
+                              <span className="ml-2 text-xs text-dark-500 font-normal">(read-only for main agent)</span>
+                            )}
                           </label>
                           <input
                             type="text"
                             value={formData.workspace}
                             onChange={(e) => handleChange('workspace', e.target.value)}
-                            disabled={isSaving}
+                            disabled={isSaving || agentId === 'main'}
                             placeholder="/home/node/.openclaw/workspace-myagent"
-                            className="input-field w-full disabled:opacity-50"
+                            className="input-field w-full disabled:opacity-50 disabled:cursor-not-allowed"
                           />
                         </div>
 
