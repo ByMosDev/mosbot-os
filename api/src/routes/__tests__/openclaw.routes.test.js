@@ -1000,6 +1000,51 @@ describe('OpenClaw Routes', () => {
       expect(ensureDocsLinkIfMissing).toHaveBeenCalledWith('new-agent');
     });
 
+    it('should preserve main as default when creating first non-main agent', async () => {
+      const token = getToken('admin-id', 'admin');
+
+      global.fetch = jest.fn().mockImplementation(async (_url, options) => {
+        if (options?.method === 'GET') {
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({ content: JSON.stringify({ agents: { list: [] } }) }),
+            text: async () => 'OK',
+          };
+        }
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ created: true }),
+          text: async () => 'OK',
+        };
+      });
+
+      gatewayWsRpc.mockImplementation((method, params) => {
+        if (method === 'config.get') return Promise.resolve({ hash: 'h1' });
+        if (method === 'config.apply') return Promise.resolve({ hash: 'h2', appliedRaw: params?.raw });
+        return Promise.resolve({});
+      });
+
+      const response = await request(app)
+        .post('/api/v1/openclaw/agents/config')
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          id: 'new-agent',
+          title: 'New Agent',
+          displayName: 'New Agent Display Name',
+        });
+
+      expect(response.status).toBe(201);
+
+      const applyCall = gatewayWsRpc.mock.calls.find((c) => c[0] === 'config.apply');
+      expect(applyCall).toBeDefined();
+      const raw = applyCall[1]?.raw || '{}';
+      const cfg = JSON.parse(raw);
+      expect(cfg.agents.list[0]).toMatchObject({ id: 'main', default: true });
+      expect(cfg.agents.list.some((a) => a.id === 'new-agent')).toBe(true);
+    });
+
     it('should create agent without writing agents.json', async () => {
       const token = getToken('admin-id', 'admin');
 
