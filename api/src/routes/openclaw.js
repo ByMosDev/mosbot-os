@@ -156,6 +156,18 @@ async function deleteAgentApiKeyById(keyId) {
   await pool.query('DELETE FROM agent_api_keys WHERE id = $1', [keyId]);
 }
 
+async function revokeAgentApiKeysById(keyIds) {
+  if (!Array.isArray(keyIds) || keyIds.length === 0) return;
+  const uniqueIds = [...new Set(keyIds.filter(Boolean))];
+  if (uniqueIds.length === 0) return;
+  await pool.query(
+    `UPDATE agent_api_keys
+     SET revoked_at = NOW()
+     WHERE id = ANY($1::uuid[])`,
+    [uniqueIds],
+  );
+}
+
 async function cleanupProvisionedApiKeyArtifacts({
   createdApiKeyId,
   workspaceRoot,
@@ -225,20 +237,8 @@ async function rotateSingleAgentApiKey({ agentId, createdByUserId, label }) {
     );
 
     const activeRows = activeKeys.rows || [];
+    const activeIds = activeRows.map((row) => row.id).filter(Boolean);
     const warnings = [];
-
-    if (activeRows.length > 0) {
-      const activeIds = activeRows.map((row) => row.id).filter(Boolean);
-      if (activeIds.length > 0) {
-        await client.query(
-          `UPDATE agent_api_keys
-           SET revoked_at = NOW()
-           WHERE id = ANY($1::uuid[])`,
-          [activeIds],
-        );
-        warnings.push('rotated active API key to restore missing mosbot.env credentials');
-      }
-    }
 
     const rawKey = generateApiKey();
     const keyHash = hashApiKey(rawKey);
@@ -253,11 +253,18 @@ async function rotateSingleAgentApiKey({ agentId, createdByUserId, label }) {
 
     await client.query('COMMIT');
 
+    if (activeIds.length > 0) {
+      warnings.push(
+        'created replacement API key to restore missing mosbot.env; revoking previous keys after provisioning',
+      );
+    }
+
     return {
       created: true,
       keyId: insertResult.rows?.[0]?.id || null,
       apiKey: rawKey,
       warnings,
+      previousActiveKeyIds: activeIds,
     };
   } catch (error) {
     try {
@@ -2213,6 +2220,7 @@ router.post(
     const setupWarnings = [];
     let updatedMosbotEnv = false;
     let createdApiKeyId = null;
+    let rotatedFromKeyIds = [];
     const mosbotEnvPath = `${workspaceRoot}/mosbot.env`;
 
     try {
@@ -2293,6 +2301,9 @@ router.post(
           }
 
           createdApiKeyId = rotatedApiKeyResult.keyId || null;
+          rotatedFromKeyIds = Array.isArray(rotatedApiKeyResult?.previousActiveKeyIds)
+            ? rotatedApiKeyResult.previousActiveKeyIds
+            : [];
           try {
             await upsertWorkspaceFile(
               mosbotEnvPath,
@@ -2372,6 +2383,19 @@ router.post(
         error: bootstrapRunError.message,
         code: bootstrapRunError.code,
       });
+    }
+
+    if (rotatedFromKeyIds.length > 0) {
+      try {
+        await revokeAgentApiKeysById(rotatedFromKeyIds);
+      } catch (revokeError) {
+        setupWarnings.push('failed to revoke previous API keys after rotation');
+        logger.warn('Failed to revoke previous API keys after re-bootstrap rotation', {
+          agentId: agentData.id,
+          keyIds: rotatedFromKeyIds,
+          error: revokeError.message,
+        });
+      }
     }
 
     const updatedFiles = [
