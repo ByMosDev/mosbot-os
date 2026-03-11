@@ -220,4 +220,32 @@ describe('docsLinkReconciliationService', () => {
       ]),
     );
   });
+
+  it('reconcileDocsLinksOnStartup includes active unassigned projects for main links', async () => {
+    getFileContent.mockResolvedValueOnce(JSON.stringify({ agents: { list: [{ id: 'main' }] } }));
+    getWorkspaceLink
+      .mockResolvedValueOnce({ state: 'linked' }) // docs/main
+      .mockResolvedValueOnce({ state: 'missing' }); // project/main:/projects/unassigned
+    ensureWorkspaceLink.mockResolvedValueOnce({ action: 'created' });
+
+    pool.query.mockResolvedValueOnce({
+      rows: [{ agent_id: null, root_path: '/projects/unassigned' }],
+    });
+
+    const result = await reconcileDocsLinksOnStartup();
+
+    expect(getWorkspaceLink).toHaveBeenCalledWith('project', 'main', {
+      targetPath: '/projects/unassigned',
+    });
+    expect(result.projectLinks.results).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          agentId: 'main',
+          projectRootPath: '/projects/unassigned',
+          action: 'created',
+          state: 'linked',
+        }),
+      ]),
+    );
+  });
 });

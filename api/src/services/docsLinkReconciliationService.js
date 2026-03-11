@@ -116,8 +116,8 @@ async function collectProjectAssignments() {
   try {
     const rows = await pool.query(
       `SELECT apa.agent_id, p.root_path
-         FROM agent_project_assignments apa
-         JOIN projects p ON p.id = apa.project_id
+         FROM projects p
+         LEFT JOIN agent_project_assignments apa ON apa.project_id = p.id
         WHERE p.status = 'active'`,
     );
 
@@ -127,11 +127,12 @@ async function collectProjectAssignments() {
     for (const row of rows.rows || []) {
       const agentId = row.agent_id;
       const rootPath = row.root_path;
-      if (!agentId || !rootPath) continue;
+      if (!rootPath) continue;
+      allProjectRoots.add(rootPath);
 
+      if (!agentId) continue;
       if (!byAgent.has(agentId)) byAgent.set(agentId, new Set());
       byAgent.get(agentId).add(rootPath);
-      allProjectRoots.add(rootPath);
     }
 
     return { byAgent, allProjectRoots };
