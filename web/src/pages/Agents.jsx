@@ -149,7 +149,6 @@ export default function Agents() {
     try {
       await syncAgentsFromOpenClaw();
       await loadConfig();
-      setConfigError(null);
     } catch (err) {
       logger.error('Failed to reconcile agents from OpenClaw', err);
       setConfigError(err?.response?.data?.error?.message || err.message || 'Failed to sync agents');
@@ -173,7 +172,6 @@ export default function Agents() {
     try {
       await rebootstrapAgent(agentId);
       await loadConfig();
-      setConfigError(null);
     } catch (err) {
       logger.error('Failed to re-bootstrap agent', { agentId, error: err.message });
       setConfigError(

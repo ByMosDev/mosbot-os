@@ -57,8 +57,26 @@ MosBot provisions:
 - `<workspace>/BOOTSTRAP.md`
 - `<workspace>/mosbot.env` (only when a new API key is created)
 
-This implements the issue #12/#13 onboarding flow: credentials + toolkit + bootstrap guidance are
-ready immediately after create.
+Create flow behavior:
+
+1. Validates the agent payload and checks `openclaw.json` to avoid duplicate IDs.
+2. Ensures the agent DB row exists so API-key bootstrap can reference it.
+3. Seeds toolkit files into the resolved workspace (`tools/*`, `TOOLS.md`).
+4. Enforces single-active-key policy:
+   - reuses the existing active key when present
+   - creates a new key only when none exists
+   - writes `mosbot.env` only when a new key is created
+5. Writes a profile-aware `BOOTSTRAP.md`.
+6. Applies runtime config (`config.apply`) to add the agent to OpenClaw.
+7. Triggers first-run bootstrap execution (`sessions_send`, with `chat.send` fallback).
+
+Failure handling:
+
+- If provisioning fails before runtime config apply, MosBot cleans up newly created key/env
+  artifacts.
+- If the DB row was newly created in this request and bootstrap fails before apply, MosBot removes
+  that row to avoid DB-only phantom agents in the UI.
+- Backend does not delete `BOOTSTRAP.md`; the agent removes it after setup.
 
 ### Re-bootstrap Agent
 
@@ -68,9 +86,13 @@ execution again. Use this for drift recovery or externally created agents.
 Notes:
 
 - Re-bootstrap uses the agent's configured workspace path.
+- Re-bootstrap validates workspace roots to agent-safe paths under `/workspace` or
+  `/workspace-<agent>`.
 - MosBot keeps **at most one active API key per agent**.
 - Existing active keys are reused; MosBot does not rotate keys on each re-bootstrap.
 - `mosbot.env` is written only when a new key is created.
+- Re-bootstrap DB upsert backfills missing runtime metadata but preserves existing DB-managed
+  hierarchy and lifecycle fields.
 - Backend does not delete `BOOTSTRAP.md`; the agent removes it after completing setup.
 
 ### Agent hierarchy
