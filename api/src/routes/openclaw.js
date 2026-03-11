@@ -548,6 +548,18 @@ function normalizeProjectRootPath(inputPath, slug) {
   return normalized;
 }
 
+function normalizeProjectContractPath(inputPath, rootPath) {
+  const normalized = normalizeAndValidateWorkspacePath(inputPath || `${rootPath}/agent-contract.md`);
+  if (!normalized.startsWith(`${rootPath}/`)) {
+    const err = new Error('Project contractPath must be under project rootPath');
+    err.status = 400;
+    err.code = 'INVALID_PROJECT_CONTRACT_PATH';
+    throw err;
+  }
+
+  return normalized;
+}
+
 async function ensureProjectLink(agentId, projectRootPath) {
   return ensureWorkspaceLink('project', agentId, { targetPath: projectRootPath });
 }
@@ -1213,9 +1225,7 @@ router.post('/projects', requireAuth, requireAdmin, async (req, res, next) => {
       });
     }
     const rootPath = normalizeProjectRootPath(body.rootPath, slug);
-    const contractPath = body.contractPath
-      ? normalizeAndValidateWorkspacePath(body.contractPath)
-      : `${rootPath}/agent-contract.md`;
+    const contractPath = normalizeProjectContractPath(body.contractPath, rootPath);
 
     const result = await pool.query(
       `INSERT INTO projects (slug, name, description, root_path, contract_path, status, created_by_user_id)
@@ -1232,19 +1242,21 @@ router.post('/projects', requireAuth, requireAdmin, async (req, res, next) => {
       ],
     );
 
-    // Ensure project root + default contract file exist.
-    try {
-      await upsertWorkspaceFile(`${rootPath}/.keep`, '');
-      const defaultContract = `# Agent Contract — ${name}\n\n- Branch naming: feat/cc-<scope> | fix/cc-<scope>\n- Handoff must include: changed files, tests+results, risks, assumptions\n- Done: local tests pass; regenerate API types/contracts when touched\n`;
-      await upsertWorkspaceFile(contractPath, defaultContract);
+    // Only active projects should be scaffolded and linked into workspaces.
+    if (result.rows[0]?.status === 'active') {
+      try {
+        await upsertWorkspaceFile(`${rootPath}/.keep`, '');
+        const defaultContract = `# Agent Contract — ${name}\n\n- Branch naming: feat/cc-<scope> | fix/cc-<scope>\n- Handoff must include: changed files, tests+results, risks, assumptions\n- Done: local tests pass; regenerate API types/contracts when touched\n`;
+        await upsertWorkspaceFile(contractPath, defaultContract);
 
-      // Main should always have links to all project roots.
-      await ensureProjectLink('main', rootPath);
-    } catch (workspaceErr) {
-      logger.warn('Project root scaffold failed (non-fatal)', {
-        slug,
-        error: workspaceErr.message,
-      });
+        // Main should always have links to all project roots.
+        await ensureProjectLink('main', rootPath);
+      } catch (workspaceErr) {
+        logger.warn('Project root scaffold failed (non-fatal)', {
+          slug,
+          error: workspaceErr.message,
+        });
+      }
     }
 
     res.status(201).json({ data: result.rows[0] });
@@ -1282,8 +1294,10 @@ router.put('/projects/:projectId', requireAuth, requireAdmin, async (req, res, n
     }
     const rootPath = normalizeProjectRootPath(body.rootPath || current.root_path, slug);
     const contractPath = body.contractPath
-      ? normalizeAndValidateWorkspacePath(body.contractPath)
-      : current.contract_path;
+      ? normalizeProjectContractPath(body.contractPath, rootPath)
+      : body.rootPath || body.slug
+        ? normalizeProjectContractPath(null, rootPath)
+        : current.contract_path;
 
     const result = await pool.query(
       `UPDATE projects
@@ -1309,8 +1323,14 @@ router.put('/projects/:projectId', requireAuth, requireAdmin, async (req, res, n
 
     const oldRootPath = current.root_path;
     const projectRootChanged = oldRootPath !== rootPath;
+    const oldStatus = current.status;
+    const newStatus = result.rows[0]?.status || current.status;
+    const archivedNow = newStatus === 'archived';
+    const justArchived = oldStatus !== 'archived' && archivedNow;
+    const needsAgentAssignments = projectRootChanged || justArchived;
 
-    if (projectRootChanged) {
+    let assignedAgentIds = [];
+    if (needsAgentAssignments) {
       let assignmentRows = { rows: [] };
       try {
         assignmentRows = await pool.query(
@@ -1324,9 +1344,30 @@ router.put('/projects/:projectId', requireAuth, requireAdmin, async (req, res, n
         });
       }
 
-      const assignedAgentIds = (assignmentRows.rows || [])
+      assignedAgentIds = (assignmentRows.rows || [])
         .map((row) => row.agent_id)
         .filter(Boolean);
+    }
+
+    if (justArchived) {
+      const pathsToCleanup = [...new Set([oldRootPath, rootPath].filter(Boolean))];
+      const agentsToCleanup = ['main', ...assignedAgentIds];
+
+      for (const cleanupPath of pathsToCleanup) {
+        for (const targetAgentId of agentsToCleanup) {
+          try {
+            await deleteProjectLink(targetAgentId, cleanupPath);
+          } catch (cleanupErr) {
+            logger.warn('Failed to remove project link while archiving project (non-fatal)', {
+              projectId,
+              targetAgentId,
+              cleanupPath,
+              error: cleanupErr.message,
+            });
+          }
+        }
+      }
+    } else if (projectRootChanged) {
       const agentsToReconcile = ['main', ...assignedAgentIds];
 
       for (const targetAgentId of agentsToReconcile) {

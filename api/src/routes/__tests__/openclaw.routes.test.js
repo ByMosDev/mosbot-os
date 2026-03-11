@@ -1783,6 +1783,77 @@ describe('OpenClaw Routes', () => {
       expect(response.body.error.code).toBe('PROJECT_NAME_REQUIRED');
     });
 
+    it('rejects project creation when contractPath is outside the project root', async () => {
+      const token = getToken('admin-id', 'admin');
+
+      const response = await request(app)
+        .post('/api/v1/openclaw/projects')
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          name: 'Alpha',
+          slug: 'alpha',
+          contractPath: '/openclaw.json',
+        });
+
+      expect(response.status).toBe(400);
+      expect(response.body.error.message).toContain('Project contractPath');
+      expect(pool.query).not.toHaveBeenCalled();
+    });
+
+    it('rejects project update when contractPath is outside the project root', async () => {
+      const token = getToken('admin-id', 'admin');
+      pool.query.mockResolvedValueOnce({
+        rows: [
+          {
+            id: 'project-1',
+            slug: 'alpha',
+            name: 'Alpha',
+            description: '',
+            root_path: '/projects/alpha',
+            contract_path: '/projects/alpha/agent-contract.md',
+            status: 'active',
+          },
+        ],
+      });
+
+      const response = await request(app)
+        .put('/api/v1/openclaw/projects/project-1')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ contractPath: '/docs/agent-contract.md' });
+
+      expect(response.status).toBe(400);
+      expect(response.body.error.message).toContain('Project contractPath');
+      expect(pool.query).not.toHaveBeenCalledWith(
+        expect.stringContaining('UPDATE projects'),
+        expect.any(Array),
+      );
+    });
+
+    it('does not scaffold or link archived projects during creation', async () => {
+      const token = getToken('admin-id', 'admin');
+      pool.query.mockResolvedValueOnce({
+        rows: [
+          {
+            id: 'project-1',
+            slug: 'alpha',
+            name: 'Alpha',
+            description: '',
+            root_path: '/projects/alpha',
+            contract_path: '/projects/alpha/agent-contract.md',
+            status: 'archived',
+          },
+        ],
+      });
+
+      const response = await request(app)
+        .post('/api/v1/openclaw/projects')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ name: 'Alpha', slug: 'alpha', status: 'archived' });
+
+      expect(response.status).toBe(201);
+      expect(global.fetch).not.toHaveBeenCalled();
+    });
+
     it('reconciles links when project rootPath changes', async () => {
       const token = getToken('admin-id', 'admin');
       pool.query
@@ -1855,6 +1926,74 @@ describe('OpenClaw Routes', () => {
           url.includes('/links/project/cto?targetPath=%2Fprojects%2Falpha-new'),
         ),
       ).toBe(true);
+      expect(ensureProjectLinkIfMissing).not.toHaveBeenCalled();
+    });
+
+    it('removes main and assigned links when project is archived', async () => {
+      const token = getToken('admin-id', 'admin');
+      pool.query
+        .mockResolvedValueOnce({
+          rows: [
+            {
+              id: 'project-1',
+              slug: 'alpha',
+              name: 'Alpha',
+              description: '',
+              root_path: '/projects/alpha',
+              contract_path: '/projects/alpha/agent-contract.md',
+              status: 'active',
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          rows: [
+            {
+              id: 'project-1',
+              slug: 'alpha',
+              name: 'Alpha',
+              description: '',
+              root_path: '/projects/alpha',
+              contract_path: '/projects/alpha/agent-contract.md',
+              status: 'archived',
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          rows: [{ agent_id: 'cto' }],
+        });
+
+      global.fetch = jest.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({ action: 'deleted', state: 'missing' }),
+        text: async () => 'OK',
+      });
+
+      const response = await request(app)
+        .put('/api/v1/openclaw/projects/project-1')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ status: 'archived' });
+
+      expect(response.status).toBe(200);
+      expect(pool.query).toHaveBeenCalledWith(
+        'SELECT agent_id FROM agent_project_assignments WHERE project_id = $1',
+        ['project-1'],
+      );
+
+      const calledUrls = (global.fetch.mock.calls || []).map((call) => String(call[0]));
+      expect(
+        calledUrls.some((url) =>
+          url.includes('/links/project/main?targetPath=%2Fprojects%2Falpha'),
+        ),
+      ).toBe(true);
+      expect(
+        calledUrls.some((url) =>
+          url.includes('/links/project/cto?targetPath=%2Fprojects%2Falpha'),
+        ),
+      ).toBe(true);
+
+      const methods = (global.fetch.mock.calls || []).map((call) => call[1]?.method);
+      expect(methods.every((method) => method === 'DELETE')).toBe(true);
       expect(ensureProjectLinkIfMissing).not.toHaveBeenCalled();
     });
 
