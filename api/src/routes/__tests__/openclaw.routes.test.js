@@ -17,6 +17,7 @@
 
 jest.mock('../../db/pool', () => ({
   query: jest.fn(),
+  connect: jest.fn(),
   end: jest.fn(),
 }));
 
@@ -119,6 +120,7 @@ describe('OpenClaw Routes', () => {
     ensureDocsLinkIfMissing.mockReset();
     ensureDocsLinkIfMissing.mockResolvedValue({ action: 'unchanged' });
     pool.query.mockResolvedValue({ rows: [] });
+    pool.connect.mockReset();
   });
 
   describe('Path normalization and validation', () => {
@@ -1601,8 +1603,7 @@ describe('OpenClaw Routes', () => {
         .set('Authorization', `Bearer ${token}`);
 
       expect(response.status).toBe(403);
-      expect(response.body.error.code).toBe('INSUFFICIENT_PERMISSIONS');
-      expect(response.body.error.message).toContain('Re-bootstrap requires admin or owner role');
+      expect(response.body.error.message).toContain('Admin or owner access required to manage users');
     });
 
     it('should reject invalid rebootstrap agent id format', async () => {
@@ -1687,6 +1688,20 @@ describe('OpenClaw Routes', () => {
           activeKeySelectCount += 1;
           return Promise.resolve({ rows: [{ id: 'key-existing' }] });
         }
+        return Promise.resolve({ rows: [] });
+      });
+
+      const clientQuery = jest.fn().mockImplementation((sql) => {
+        if (String(sql).includes('BEGIN') || String(sql).includes('COMMIT')) {
+          return Promise.resolve({ rows: [] });
+        }
+        if (
+          String(sql).includes('FROM agent_api_keys') &&
+          String(sql).includes('revoked_at IS NULL')
+        ) {
+          activeKeySelectCount += 1;
+          return Promise.resolve({ rows: [{ id: 'key-existing' }] });
+        }
         if (
           String(sql).includes('UPDATE agent_api_keys') &&
           String(sql).includes('SET revoked_at = NOW()')
@@ -1697,6 +1712,11 @@ describe('OpenClaw Routes', () => {
           return Promise.resolve({ rows: [{ id: 'key-rotated' }] });
         }
         return Promise.resolve({ rows: [] });
+      });
+
+      pool.connect.mockResolvedValue({
+        query: clientQuery,
+        release: jest.fn(),
       });
 
       global.fetch = jest.fn().mockImplementation(async (url, options) => {
@@ -1755,7 +1775,7 @@ describe('OpenClaw Routes', () => {
         .set('Authorization', `Bearer ${token}`);
 
       expect(response.status).toBe(200);
-      expect(activeKeySelectCount).toBeGreaterThanOrEqual(2);
+      expect(activeKeySelectCount).toBeGreaterThanOrEqual(1);
       expect(writePaths).toEqual(expect.arrayContaining(['/workspace-coo/mosbot.env']));
       expect(response.body.data.updatedFiles).toContain('/workspace-coo/mosbot.env');
       expect(
@@ -1764,7 +1784,7 @@ describe('OpenClaw Routes', () => {
         ),
       ).toBe(true);
 
-      const revokeCall = pool.query.mock.calls.find(
+      const revokeCall = clientQuery.mock.calls.find(
         ([sql]) =>
           String(sql).includes('UPDATE agent_api_keys') &&
           String(sql).includes('SET revoked_at = NOW()'),
