@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcrypt');
+const crypto = require('crypto');
 const config = require('../config');
 const logger = require('../utils/logger');
 const path = require('path');
@@ -13,7 +14,7 @@ const { recordActivityLogEventSafe } = require('../services/activityLogService')
 const { parseOpenClawConfig } = require('../utils/configParser');
 const { getJwtSecret } = require('../utils/jwt');
 const { ensureDocsLinkIfMissing } = require('../services/docsLinkReconciliationService');
-const { gatewayWsRpc } = require('../services/openclawGatewayClient');
+const { gatewayWsRpc, invokeTool } = require('../services/openclawGatewayClient');
 
 const BUILTIN_OPENCLAW_REMAP_PREFIXES = [
   '/home/node/.openclaw/workspace',
@@ -55,6 +56,455 @@ const requireAuth = (req, res, next) => {
     });
   }
 };
+
+function hashApiKey(rawKey) {
+  return crypto.createHash('sha256').update(rawKey).digest('hex');
+}
+
+function generateApiKey() {
+  const random = crypto.randomBytes(24).toString('base64url');
+  return `mba_${random}`;
+}
+
+async function upsertWorkspaceFile(path, content, encoding = 'utf8') {
+  try {
+    return await makeOpenClawRequest('PUT', '/files', { path, content, encoding });
+  } catch (error) {
+    if (error?.status === 404) {
+      return makeOpenClawRequest('POST', '/files', { path, content, encoding });
+    }
+    throw error;
+  }
+}
+
+function getMosbotApiBaseUrl(req) {
+  const explicit = process.env.MOSBOT_API_URL || null;
+  if (explicit) return explicit.replace(/\/$/, '');
+
+  const protoHeader = req.get('x-forwarded-proto');
+  const hostHeader = req.get('x-forwarded-host') || req.get('host');
+  const proto = protoHeader ? protoHeader.split(',')[0].trim() : req.protocol || 'http';
+  const host = hostHeader || 'localhost:3000';
+  return `${proto}://${host}/api/v1`;
+}
+
+function buildAgentToolkitFiles(workspaceRoot) {
+  const mosbotAuthScript = `#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "\${BASH_SOURCE[0]}")" && pwd)"
+ENV_FILE="\${MOSBOT_ENV_FILE:-\${PWD}/mosbot.env}"
+CACHE_FILE="\${MOSBOT_TOKEN_CACHE:-\${HOME}/.mosbot-token}"
+
+if [[ ! -f "\${ENV_FILE}" ]]; then
+  echo "mosbot-auth: env file not found at \${ENV_FILE}" >&2
+  exit 1
+fi
+
+set -a
+# shellcheck disable=SC1090
+source "\${ENV_FILE}"
+set +a
+
+if [[ -z "\${MOSBOT_API_URL:-}" ]]; then
+  echo "mosbot-auth: MOSBOT_API_URL missing in \${ENV_FILE}" >&2
+  exit 1
+fi
+
+if [[ -z "\${MOSBOT_API_KEY:-}" ]]; then
+  echo "mosbot-auth: MOSBOT_API_KEY missing in \${ENV_FILE}" >&2
+  exit 1
+fi
+
+printf '%s\n' "\${MOSBOT_API_KEY}" > "\${CACHE_FILE}"
+chmod 600 "\${CACHE_FILE}" 2>/dev/null || true
+printf '%s\n' "\${MOSBOT_API_KEY}"
+`;
+
+  const mosbotTaskScript = `#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "\${BASH_SOURCE[0]}")" && pwd)"
+ENV_FILE="\${MOSBOT_ENV_FILE:-\${PWD}/mosbot.env}"
+
+if [[ ! -f "\${ENV_FILE}" ]]; then
+  echo "mosbot-task: env file not found at \${ENV_FILE}" >&2
+  exit 1
+fi
+
+set -a
+# shellcheck disable=SC1090
+source "\${ENV_FILE}"
+set +a
+
+if [[ -z "\${MOSBOT_API_URL:-}" ]]; then
+  echo "mosbot-task: MOSBOT_API_URL missing in \${ENV_FILE}" >&2
+  exit 1
+fi
+
+TOKEN="$("\${SCRIPT_DIR}/mosbot-auth")"
+AUTH_HEADER="Authorization: Bearer \${TOKEN}"
+
+usage() {
+  cat <<'USAGE'
+Usage: mosbot-task <command> [args]
+
+Commands:
+  list [--status "TO DO"]
+  create "Title" [--summary "..."] [--status "PLANNING"] [--priority "Medium"] [--type "task"] [--tags "tag1,tag2"]
+  update <task-id> [--status "IN PROGRESS"] [--priority "High"] [--title "..."] [--summary "..."]
+  comment <task-id> "comment text"
+  get <task-id>
+USAGE
+}
+
+cmd="\${1:-}"
+if [[ -z "\${cmd}" ]]; then
+  usage
+  exit 1
+fi
+shift || true
+
+case "\${cmd}" in
+  list)
+    params=""
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        --status) params="\${params}&status=$2"; shift 2 ;;
+        *) echo "Unknown arg: $1" >&2; exit 1 ;;
+      esac
+    done
+    curl -s "\${MOSBOT_API_URL}/tasks?\${params#&}" -H "\${AUTH_HEADER}"
+    ;;
+
+  create)
+    title="\${1:-}"
+    if [[ -z "\${title}" ]]; then
+      echo "create requires a title" >&2
+      exit 1
+    fi
+    shift || true
+
+    summary=""
+    status="PLANNING"
+    priority=""
+    type="task"
+    tags=""
+
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        --summary) summary="$2"; shift 2 ;;
+        --status) status="$2"; shift 2 ;;
+        --priority) priority="$2"; shift 2 ;;
+        --type) type="$2"; shift 2 ;;
+        --tags) tags="$2"; shift 2 ;;
+        *) echo "Unknown arg: $1" >&2; exit 1 ;;
+      esac
+    done
+
+    payload=$(python3 -c 'import json,sys; title,summary,status,priority,typ,tags=sys.argv[1:]; p={"title":title,"status":status,"type":typ};if summary: p["summary"]=summary;if priority: p["priority"]=priority;if tags: p["tags"]=[t.strip() for t in tags.split(",") if t.strip()];print(json.dumps(p))' "\${title}" "\${summary}" "\${status}" "\${priority}" "\${type}" "\${tags}")
+
+    curl -s -X POST "\${MOSBOT_API_URL}/tasks" \
+      -H "\${AUTH_HEADER}" \
+      -H "Content-Type: application/json" \
+      -d "\${payload}"
+    ;;
+
+  update)
+    task_id="\${1:-}"
+    if [[ -z "\${task_id}" ]]; then
+      echo "update requires a task id" >&2
+      exit 1
+    fi
+    shift || true
+
+    payload="{}"
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        --status) payload=$(python3 -c 'import json,sys; d=json.loads(sys.argv[1]); d["status"]=sys.argv[2]; print(json.dumps(d))' "\${payload}" "$2"); shift 2 ;;
+        --priority) payload=$(python3 -c 'import json,sys; d=json.loads(sys.argv[1]); d["priority"]=sys.argv[2]; print(json.dumps(d))' "\${payload}" "$2"); shift 2 ;;
+        --title) payload=$(python3 -c 'import json,sys; d=json.loads(sys.argv[1]); d["title"]=sys.argv[2]; print(json.dumps(d))' "\${payload}" "$2"); shift 2 ;;
+        --summary) payload=$(python3 -c 'import json,sys; d=json.loads(sys.argv[1]); d["summary"]=sys.argv[2]; print(json.dumps(d))' "\${payload}" "$2"); shift 2 ;;
+        *) echo "Unknown arg: $1" >&2; exit 1 ;;
+      esac
+    done
+
+    curl -s -X PATCH "\${MOSBOT_API_URL}/tasks/\${task_id}" \
+      -H "\${AUTH_HEADER}" \
+      -H "Content-Type: application/json" \
+      -d "\${payload}"
+    ;;
+
+  comment)
+    task_id="\${1:-}"
+    shift || true
+    body="\${*:-}"
+    if [[ -z "\${task_id}" || -z "\${body}" ]]; then
+      echo "comment requires: <task-id> <body>" >&2
+      exit 1
+    fi
+
+    body_json=$(python3 -c 'import json,sys; print(json.dumps({"body":sys.argv[1]}))' "\${body}")
+    curl -s -X POST "\${MOSBOT_API_URL}/tasks/\${task_id}/comments" \
+      -H "\${AUTH_HEADER}" \
+      -H "Content-Type: application/json" \
+      -d "\${body_json}"
+    ;;
+
+  get)
+    task_id="\${1:-}"
+    if [[ -z "\${task_id}" ]]; then
+      echo "get requires a task id" >&2
+      exit 1
+    fi
+    curl -s "\${MOSBOT_API_URL}/tasks/\${task_id}" -H "\${AUTH_HEADER}"
+    ;;
+
+  *)
+    usage
+    exit 1
+    ;;
+esac
+`;
+
+  const integrationDoc = `# MosBot Toolkit (Workspace Local)
+
+This toolkit is generated into each agent workspace at \`./tools\`.
+
+## Files
+
+- \`./tools/mosbot-auth\` - emits a usable API token (currently API key pass-through)
+- \`./tools/mosbot-task\` - task board helper CLI
+- \`./tools/INTEGRATION.md\` - this guide
+
+## Agent setup expectations
+
+1. Ensure \`mosbot.env\` exists in your workspace root.
+2. Export \`MOSBOT_ENV_FILE\` if your env file is in a non-default path.
+3. Use helper scripts directly:
+
+\`\`\`bash
+bash ./tools/mosbot-task list --status "TO DO"
+bash ./tools/mosbot-task create "Example task" --priority "Medium"
+bash ./tools/mosbot-task update <task-id> --status "IN PROGRESS"
+bash ./tools/mosbot-task comment <task-id> "Progress note"
+\`\`\`
+`;
+
+  const toolsDoc = `# TOOLS.md
+
+Local workspace notes for this agent.
+
+## MosBot Toolkit
+
+- \`./tools/mosbot-auth\`: Reads \`mosbot.env\` and returns a usable bearer token.
+- \`./tools/mosbot-task\`: Minimal task board CLI wrapper around \`/api/v1/tasks\` endpoints.
+- Run with \`bash ./tools/mosbot-task ...\` (workspace service writes files without executable bits).
+
+Default env file path: \`$PWD/mosbot.env\`.
+Override with: \`export MOSBOT_ENV_FILE=/path/to/mosbot.env\`.
+`;
+
+  return [
+    { path: `${workspaceRoot}/tools/mosbot-auth`, content: mosbotAuthScript },
+    { path: `${workspaceRoot}/tools/mosbot-task`, content: mosbotTaskScript },
+    { path: `${workspaceRoot}/tools/INTEGRATION.md`, content: integrationDoc },
+    { path: `${workspaceRoot}/TOOLS.md`, content: toolsDoc },
+  ];
+}
+
+async function writeAgentToolkit(workspaceRoot) {
+  const files = buildAgentToolkitFiles(workspaceRoot);
+  for (const file of files) {
+    await upsertWorkspaceFile(file.path, file.content);
+  }
+}
+
+function buildAgentBootstrapContent(agentData = {}) {
+  const profile = {
+    id: agentData.id || '',
+    displayName: agentData.displayName || '',
+    title: agentData.title || '',
+    description: agentData.description || '',
+    reportsTo: agentData.reportsTo || '',
+    identityName: agentData.identityName || '',
+    identityTheme: agentData.identityTheme || '',
+    identityEmoji: agentData.identityEmoji || '',
+    modelPrimary: agentData.modelPrimary || '',
+    modelFallback1: agentData.modelFallback1 || '',
+    modelFallback2: agentData.modelFallback2 || '',
+    heartbeatEnabled: agentData.heartbeatEnabled === true,
+    heartbeatEvery: agentData.heartbeatEvery || '',
+    heartbeatModel: agentData.heartbeatModel || '',
+  };
+
+  return `# BOOTSTRAP.md
+
+You are a newly created agent workspace. Complete the setup below before taking work.
+
+## Agent profile (from create form)
+
+\`\`\`json
+${JSON.stringify(profile, null, 2)}
+\`\`\`
+
+## First-run mission
+
+1. Read \`./tools/INTEGRATION.md\` and \`./TOOLS.md\`.
+2. Ensure these root files exist and are meaningful for this agent:
+   - \`AGENTS.md\`
+   - \`SOUL.md\`
+   - \`IDENTITY.md\`
+   - \`USER.md\`
+   - \`TOOLS.md\` (already seeded; extend with local notes)
+3. If any file is missing or generic, create/update it using the profile above:
+   - \`IDENTITY.md\`: who you are (name/title/emoji/theme/role)
+   - \`SOUL.md\`: behavior, tone, boundaries, work style
+   - \`USER.md\`: who you're helping and how to work with them
+   - \`AGENTS.md\`: operating rules, workspace conventions, safety reminders
+4. Confirm \`mosbot.env\` exists in workspace root.
+5. Pull your queue:
+   - \`bash ./tools/mosbot-task list --status "TO DO"\`
+6. If at least one task exists, post a brief status comment on your first task: setup complete + assumptions.
+   - If no task exists, explicitly note that and continue.
+7. Delete this \`BOOTSTRAP.md\` after setup is complete (even when no tasks exist).
+
+## Guardrails
+
+- Do not invent role details not present in the profile.
+- If profile fields are empty, keep defaults conservative and document assumptions.
+- Prefer concise, operational docs over long prose.
+`;
+}
+
+function buildAgentMosbotEnv({ req, agentId, apiKey }) {
+  const apiUrl = getMosbotApiBaseUrl(req);
+  return [
+    `MOSBOT_API_URL=${apiUrl}`,
+    `MOSBOT_AGENT_ID=${agentId}`,
+    `MOSBOT_API_KEY=${apiKey}`,
+    'MOSBOT_ENV_VERSION=1',
+  ].join('\n') + '\n';
+}
+
+const BOOTSTRAP_AUTO_RUN_MESSAGE = `Read BOOTSTRAP.md from workspace root and execute it now.
+Complete every setup task listed in the file.
+If no queue task exists, note that and continue.
+Delete BOOTSTRAP.md when setup is complete.
+Reply with: DONE plus a concise list of files created/updated.`;
+
+async function runBootstrapForNewAgent(agentId) {
+  const sessionKey = agentId === 'main' ? 'main' : `agent:${agentId}:main`;
+
+  // Attempt 1: sessions_send (synchronous reply path when available)
+  try {
+    const result = await invokeTool(
+      'sessions_send',
+      {
+        sessionKey,
+        message: BOOTSTRAP_AUTO_RUN_MESSAGE,
+        timeoutSeconds: 180,
+      },
+      {
+        // Invoke from operator context; target session is provided in args.sessionKey.
+        sessionKey: 'main',
+      },
+    );
+
+    if (result) {
+      if (result.status === 'error') {
+        const err = new Error(result.error || 'sessions_send returned error');
+        err.code = 'BOOTSTRAP_TRIGGER_ERROR';
+        throw err;
+      }
+
+      if (result.status === 'timeout') {
+        const err = new Error(`sessions_send timed out after ${result.timeoutSeconds || 180}s`);
+        err.code = 'BOOTSTRAP_TRIGGER_TIMEOUT';
+        throw err;
+      }
+
+      return {
+        ...result,
+        transport: 'sessions_send',
+      };
+    }
+  } catch (sessionsSendError) {
+    logger.warn('sessions_send unavailable for bootstrap trigger, falling back to chat.send', {
+      agentId,
+      sessionKey,
+      error: sessionsSendError.message,
+      code: sessionsSendError.code,
+    });
+  }
+
+  // Attempt 2: chat.send via WS RPC (asynchronous fire-and-forget trigger)
+  const idempotencyKey = `bootstrap-${agentId}-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`;
+  const sendResult = await gatewayWsRpc('chat.send', {
+    idempotencyKey,
+    sessionKey,
+    message: BOOTSTRAP_AUTO_RUN_MESSAGE,
+  });
+
+  if (!sendResult) {
+    const err = new Error('chat.send returned no result');
+    err.code = 'BOOTSTRAP_TRIGGER_UNAVAILABLE';
+    throw err;
+  }
+
+  if (sendResult.status === 'error') {
+    const err = new Error(sendResult.error || 'chat.send returned error');
+    err.code = 'BOOTSTRAP_TRIGGER_ERROR';
+    throw err;
+  }
+
+  return {
+    ...sendResult,
+    transport: 'chat.send',
+  };
+}
+
+async function maybeFinalizeBootstrapFile(workspaceRoot, { attempts = 6, delayMs = 3000 } = {}) {
+  const requiredFiles = ['AGENTS.md', 'SOUL.md', 'IDENTITY.md', 'USER.md'];
+  const bootstrapPath = `${workspaceRoot}/BOOTSTRAP.md`;
+
+  const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    const listing = await makeOpenClawRequest(
+      'GET',
+      `/files?path=${encodeURIComponent(workspaceRoot)}&recursive=false`,
+    );
+    const files = Array.isArray(listing?.files) ? listing.files : [];
+    const names = new Set(files.map((f) => f.name));
+
+    const hasBootstrap = names.has('BOOTSTRAP.md');
+    if (!hasBootstrap) {
+      return { status: 'already_removed', attempt };
+    }
+
+    const missingRequired = requiredFiles.filter((name) => !names.has(name));
+    if (missingRequired.length === 0) {
+      await makeOpenClawRequest('DELETE', `/files?path=${encodeURIComponent(bootstrapPath)}`);
+      return { status: 'removed_by_backend', attempt };
+    }
+
+    if (attempt < attempts) {
+      await wait(delayMs);
+    } else {
+      return { status: 'still_present', missingRequired, attempt };
+    }
+  }
+
+  return { status: 'unknown' };
+}
+
+function normalizeAgentIdForPath(agentId) {
+  return String(agentId || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]/g, '-');
+}
 
 function normalizeAndValidateWorkspacePath(inputPath) {
   const raw = typeof inputPath === 'string' && inputPath.trim() ? inputPath.trim() : '/';
@@ -976,6 +1426,20 @@ router.put('/agents/config/:agentId', requireAuth, requireAdmin, async (req, res
         });
 
         await ensureDocsLinkIfMissing(agentId);
+
+        // Keep DB agent registry aligned immediately after runtime config mutation.
+        try {
+          const { reconcileAgentsFromOpenClaw } = require('../services/agentReconciliationService');
+          await reconcileAgentsFromOpenClaw({
+            trigger: 'agent_update',
+            actorUserId: req.user.id,
+          });
+        } catch (reconcileError) {
+          logger.warn('Agent reconcile after update failed (non-fatal)', {
+            agentId,
+            error: reconcileError.message,
+          });
+        }
       }
     }
 
@@ -1133,6 +1597,107 @@ router.post('/agents/config', requireAuth, requireAdmin, async (req, res, next) 
       });
 
       await ensureDocsLinkIfMissing(agentData.id);
+
+      // Keep DB agent registry aligned immediately after runtime config mutation.
+      try {
+        const { reconcileAgentsFromOpenClaw } = require('../services/agentReconciliationService');
+        await reconcileAgentsFromOpenClaw({
+          trigger: 'agent_create',
+          actorUserId: req.user.id,
+        });
+      } catch (reconcileError) {
+        logger.warn('Agent reconcile after create failed (non-fatal)', {
+          agentId: agentData.id,
+          error: reconcileError.message,
+        });
+      }
+
+      // Agent workspace bootstrap + credentials + workspace-local toolkit
+      const setupWarnings = [];
+
+      let agentApiKey = null;
+      try {
+        const rawKey = generateApiKey();
+        const keyHash = hashApiKey(rawKey);
+        const keyPrefix = rawKey.slice(0, 12);
+
+        await pool.query(
+          `INSERT INTO agent_api_keys (agent_id, key_hash, key_prefix, label, created_by_user_id)
+           VALUES ($1, $2, $3, $4, $5)`,
+          [agentData.id, keyHash, keyPrefix, 'bootstrap', req.user.id],
+        );
+
+        agentApiKey = rawKey;
+      } catch (apiKeyError) {
+        if (apiKeyError.code === '42P01') {
+          setupWarnings.push('agent_api_keys table not found; skipped API key bootstrap');
+        } else {
+          setupWarnings.push(`agent API key bootstrap failed: ${apiKeyError.message}`);
+        }
+        logger.warn('Failed to create bootstrap API key', {
+          agentId: agentData.id,
+          error: apiKeyError.message,
+          code: apiKeyError.code,
+        });
+      }
+
+      const safeAgentId = normalizeAgentIdForPath(agentData.id);
+      const workspaceRoot = safeAgentId === 'main' ? '/workspace' : `/workspace-${safeAgentId}`;
+      req._agentWorkspaceRoot = workspaceRoot;
+      req._agentCreateApiKeyProvisioned = Boolean(agentApiKey);
+
+      try {
+        await writeAgentToolkit(workspaceRoot);
+
+        if (agentApiKey) {
+          await upsertWorkspaceFile(
+            `${workspaceRoot}/mosbot.env`,
+            buildAgentMosbotEnv({ req, agentId: agentData.id, apiKey: agentApiKey }),
+          );
+        }
+
+        await upsertWorkspaceFile(
+          `${workspaceRoot}/BOOTSTRAP.md`,
+          buildAgentBootstrapContent(agentData),
+        );
+      } catch (workspaceError) {
+        setupWarnings.push(`workspace bootstrap failed: ${workspaceError.message}`);
+        logger.warn('Failed to write bootstrap files for new agent', {
+          agentId: agentData.id,
+          error: workspaceError.message,
+        });
+      }
+
+      // Trigger bootstrap execution immediately after agent creation so
+      // first-run setup is deterministic from the MosBot flow.
+      if (!setupWarnings.some((w) => w.startsWith('workspace bootstrap failed:'))) {
+        try {
+          const bootstrapResult = await runBootstrapForNewAgent(agentData.id);
+          logger.info('Triggered bootstrap run for new agent', {
+            agentId: agentData.id,
+            status: bootstrapResult?.status || 'ok',
+            runId: bootstrapResult?.runId || null,
+          });
+
+          // Best-effort deterministic cleanup: if bootstrap artifacts are present but
+          // BOOTSTRAP.md remains, remove it from backend once required root files exist.
+          const finalize = await maybeFinalizeBootstrapFile(workspaceRoot);
+          if (finalize.status === 'still_present') {
+            setupWarnings.push(
+              `bootstrap file still present after trigger (missing: ${(finalize.missingRequired || []).join(', ')})`,
+            );
+          }
+        } catch (bootstrapRunError) {
+          setupWarnings.push(`bootstrap execution trigger failed: ${bootstrapRunError.message}`);
+          logger.warn('Failed to trigger bootstrap run for new agent', {
+            agentId: agentData.id,
+            error: bootstrapRunError.message,
+            code: bootstrapRunError.code,
+          });
+        }
+      }
+
+      req._agentCreateWarnings = setupWarnings;
     }
 
     recordActivityLogEventSafe({
@@ -1146,12 +1711,25 @@ router.post('/agents/config', requireAuth, requireAdmin, async (req, res, next) 
       meta: { agentData },
     });
 
+    const workspaceRootForResponse = req._agentWorkspaceRoot || '/workspace-<agent>';
+    const updatedFiles = [
+      '/openclaw.json',
+      'database',
+      `${workspaceRootForResponse}/tools/*`,
+      `${workspaceRootForResponse}/TOOLS.md`,
+      `${workspaceRootForResponse}/BOOTSTRAP.md`,
+    ];
+    if (req._agentCreateApiKeyProvisioned) {
+      updatedFiles.push(`${workspaceRootForResponse}/mosbot.env`);
+    }
+
     res.status(201).json({
       data: {
         agentId: agentData.id,
         message: 'Agent created successfully',
         created: true,
-        updatedFiles: ['/openclaw.json', 'database'],
+        updatedFiles,
+        warnings: req._agentCreateWarnings || [],
       },
     });
   } catch (error) {
@@ -4159,7 +4737,21 @@ router.put('/config', requireAuth, requireOwnerOrAdmin, async (req, res, next) =
       });
     }
 
-    // Step 5: record activity log
+    // Step 5: reconcile DB agent registry against updated openclaw.json (best-effort)
+    try {
+      const { reconcileAgentsFromOpenClaw } = require('../services/agentReconciliationService');
+      await reconcileAgentsFromOpenClaw({
+        trigger: 'config_apply',
+        actorUserId: req.user.id,
+      });
+    } catch (reconcileError) {
+      logger.warn('Agent reconcile after config.apply failed (non-fatal)', {
+        userId: req.user.id,
+        error: reconcileError.message,
+      });
+    }
+
+    // Step 6: record activity log
     recordActivityLogEventSafe({
       event_type: 'openclaw_config_updated',
       source: 'workspace',
