@@ -20,9 +20,9 @@ they can do.
 | **user**  | Standard access               | Team members, read-mostly users    |
 
 `owner` and `admin` are the primary operator roles. In backend authorization, `agent` is
-admin-equivalent for many coarse-grained operational/configuration routes guarded by
-`requireAdmin`, but stricter limits are still enforced by endpoint-specific checks (for example,
-user management and Agents page lifecycle actions).
+admin-equivalent for many coarse-grained operational/configuration routes guarded by `requireAdmin`,
+but stricter limits are still enforced by endpoint-specific checks (for example, user management and
+Agents page lifecycle actions).
 
 ## Permissions matrix
 
