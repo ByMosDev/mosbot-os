@@ -417,7 +417,7 @@ function createApp(opts) {
           payload: {
             error: "Invalid project slug in target path",
             code: "INVALID_PROJECT_TARGET_PATH",
-            targetPath: targetPathInput || null,
+            targetPath: targetPathInput,
           },
         };
       }
