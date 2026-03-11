@@ -26,15 +26,17 @@ CREATE TRIGGER update_projects_updated_at
   EXECUTE FUNCTION update_updated_at();
 
 CREATE TABLE IF NOT EXISTS agent_project_assignments (
-  agent_id TEXT PRIMARY KEY REFERENCES agents(agent_id) ON DELETE CASCADE,
+  agent_id TEXT NOT NULL REFERENCES agents(agent_id) ON DELETE CASCADE,
   project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
   role TEXT NOT NULL DEFAULT 'contributor',
   assigned_by_user_id UUID REFERENCES users(id) ON DELETE SET NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (agent_id, project_id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_agent_project_assignments_project_id ON agent_project_assignments(project_id);
+CREATE INDEX IF NOT EXISTS idx_agent_project_assignments_agent_id ON agent_project_assignments(agent_id);
 
 DROP TRIGGER IF EXISTS update_agent_project_assignments_updated_at ON agent_project_assignments;
 CREATE TRIGGER update_agent_project_assignments_updated_at

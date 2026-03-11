@@ -257,11 +257,16 @@ export default function Agents() {
                 {leader.emoji && <span className="mr-2">{leader.emoji}</span>}
                 {leader.displayName || leader.label}
               </h3>
-              {leader.project?.slug && (
-                <div className="mb-1">
-                  <span className="px-2 py-0.5 bg-indigo-600/20 text-indigo-300 border border-indigo-500/30 rounded text-[10px] font-semibold uppercase tracking-wide">
-                    Project: {leader.project.slug}
-                  </span>
+              {Array.isArray(leader.projects) && leader.projects.length > 0 && (
+                <div className="mb-1 flex flex-wrap gap-1">
+                  {leader.projects.map((p) => (
+                    <span
+                      key={`${leader.id}-${p.id}`}
+                      className="px-2 py-0.5 bg-indigo-600/20 text-indigo-300 border border-indigo-500/30 rounded text-[10px] font-semibold uppercase tracking-wide"
+                    >
+                      Project: {p.slug}
+                    </span>
+                  ))}
                 </div>
               )}
             </div>

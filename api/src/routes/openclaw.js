@@ -547,15 +547,16 @@ async function deleteProjectLink(agentId, projectRootPath) {
   return deleteWorkspaceLink('project', agentId, { targetPath: projectRootPath });
 }
 
-async function getAssignedProjectForAgent(agentId) {
+async function getAssignedProjectsForAgent(agentId) {
   const result = await pool.query(
     `SELECT p.id, p.slug, p.name, p.root_path, p.contract_path
        FROM agent_project_assignments apa
        JOIN projects p ON p.id = apa.project_id
-      WHERE apa.agent_id = $1`,
+      WHERE apa.agent_id = $1
+      ORDER BY p.slug ASC`,
     [agentId],
   );
-  return result.rows[0] || null;
+  return result.rows || [];
 }
 
 function normalizeAndValidateWorkspacePath(inputPath) {
@@ -1323,9 +1324,8 @@ router.post('/projects/:projectId/assign-agent', requireAuth, requireAdmin, asyn
     await pool.query(
       `INSERT INTO agent_project_assignments (agent_id, project_id, role, assigned_by_user_id)
        VALUES ($1, $2, $3, $4)
-       ON CONFLICT (agent_id)
-       DO UPDATE SET project_id = EXCLUDED.project_id,
-                     role = EXCLUDED.role,
+       ON CONFLICT (agent_id, project_id)
+       DO UPDATE SET role = EXCLUDED.role,
                      assigned_by_user_id = EXCLUDED.assigned_by_user_id,
                      updated_at = NOW()`,
       [agentId, project.id, role || 'contributor', req.user.id],
@@ -1594,25 +1594,26 @@ router.get('/agents/config', requireAuth, async (req, res, next) => {
 
     const dbByAgentId = new Map(dbRows.map((r) => [r.agent_id, r]));
 
-    let projectByAgentId = new Map();
+    let projectsByAgentId = new Map();
     try {
       const projectRows = await pool.query(
         `SELECT apa.agent_id, p.id AS project_id, p.slug, p.name, p.root_path, p.contract_path
            FROM agent_project_assignments apa
-           JOIN projects p ON p.id = apa.project_id`,
+           JOIN projects p ON p.id = apa.project_id
+          ORDER BY p.slug ASC`,
       );
-      projectByAgentId = new Map(
-        (projectRows.rows || []).map((row) => [
-          row.agent_id,
-          {
-            id: row.project_id,
-            slug: row.slug,
-            name: row.name,
-            rootPath: row.root_path,
-            contractPath: row.contract_path,
-          },
-        ]),
-      );
+      for (const row of projectRows.rows || []) {
+        if (!projectsByAgentId.has(row.agent_id)) {
+          projectsByAgentId.set(row.agent_id, []);
+        }
+        projectsByAgentId.get(row.agent_id).push({
+          id: row.project_id,
+          slug: row.slug,
+          name: row.name,
+          rootPath: row.root_path,
+          contractPath: row.contract_path,
+        });
+      }
     } catch (projectErr) {
       if (projectErr.code !== '42P01') {
         logger.warn('Failed to read project assignments for agents/config', {
@@ -1636,7 +1637,7 @@ router.get('/agents/config', requireAuth, async (req, res, next) => {
         reportsTo: row?.reports_to || null,
         isDefault: Boolean(discovered.isDefault),
         model: discovered.model || null,
-        project: projectByAgentId.get(agentId) || null,
+        projects: projectsByAgentId.get(agentId) || [],
       });
     }
 
@@ -1657,7 +1658,7 @@ router.get('/agents/config', requireAuth, async (req, res, next) => {
         reportsTo: row.reports_to || null,
         isDefault: false,
         model: null,
-        project: projectByAgentId.get(row.agent_id) || null,
+        projects: projectsByAgentId.get(row.agent_id) || [],
       });
     }
 
@@ -1981,9 +1982,11 @@ router.post('/agents/config', requireAuth, requireAdmin, async (req, res, next) 
 
       // If agent is already project-assigned, ensure /project link exists.
       try {
-        const assignedProject = await getAssignedProjectForAgent(agentData.id);
-        if (assignedProject?.root_path) {
-          await ensureProjectLink(agentData.id, assignedProject.root_path);
+        const assignedProjects = await getAssignedProjectsForAgent(agentData.id);
+        for (const assignedProject of assignedProjects) {
+          if (assignedProject?.root_path) {
+            await ensureProjectLink(agentData.id, assignedProject.root_path);
+          }
         }
       } catch (projectLinkErr) {
         setupWarnings.push(`project link ensure failed: ${projectLinkErr.message}`);
@@ -2272,9 +2275,11 @@ router.post('/agents/config/:agentId/rebootstrap', requireAuth, requireAdmin, as
     }
 
     try {
-      const assignedProject = await getAssignedProjectForAgent(agentData.id);
-      if (assignedProject?.root_path) {
-        await ensureProjectLink(agentData.id, assignedProject.root_path);
+      const assignedProjects = await getAssignedProjectsForAgent(agentData.id);
+      for (const assignedProject of assignedProjects) {
+        if (assignedProject?.root_path) {
+          await ensureProjectLink(agentData.id, assignedProject.root_path);
+        }
       }
     } catch (projectLinkErr) {
       setupWarnings.push(`project link ensure failed: ${projectLinkErr.message}`);

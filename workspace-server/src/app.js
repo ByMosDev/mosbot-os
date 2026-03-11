@@ -15,7 +15,6 @@ const WORKSPACE_AGENT_PATH_PATTERN = /^\/workspace-[^/]+(?:\/.*)?$/;
 const PATH_NOT_ALLOWED_CODE = "PATH_NOT_ALLOWED";
 const SHARED_DOCS_DIR = "docs";
 const SHARED_PROJECTS_DIR = "projects";
-const PROJECT_LINK_NAME = "project";
 const SUPPORTED_LINK_TYPES = new Set(["docs", "project"]);
 const LINK_TYPE_UNSUPPORTED_CODE = "LINK_TYPE_UNSUPPORTED";
 const INVALID_AGENT_ID_CODE = "INVALID_AGENT_ID";
@@ -408,8 +407,21 @@ function createApp(opts) {
         };
       }
 
-      linkPath = path.resolve(workspacePath, PROJECT_LINK_NAME);
-      targetVirtualPath = projectTargetVirtualPath;
+      const projectSlug = projectTargetVirtualPath.replace(/^\/projects\//, "").split("/")[0];
+      if (!projectSlug || !AGENT_ID_PATTERN.test(projectSlug)) {
+        return {
+          ok: false,
+          status: 400,
+          payload: {
+            error: "Invalid project slug in target path",
+            code: "INVALID_PROJECT_TARGET_PATH",
+            targetPath: targetPathInput || null,
+          },
+        };
+      }
+
+      linkPath = path.resolve(workspacePath, SHARED_PROJECTS_DIR, projectSlug);
+      targetVirtualPath = `/projects/${projectSlug}`;
     }
 
     const targetPath = path.resolve(CONFIG_ROOT, targetVirtualPath.replace(/^\/+/, ""));
@@ -429,7 +441,7 @@ function createApp(opts) {
       linkVirtualPath:
         linkType === "docs"
           ? `${workspaceVirtualPath}/${SHARED_DOCS_DIR}`
-          : `${workspaceVirtualPath}/${PROJECT_LINK_NAME}`,
+          : `${workspaceVirtualPath}/${SHARED_PROJECTS_DIR}/${targetVirtualPath.replace(/^\/projects\//, "")}`,
       targetVirtualPath,
     };
   }
@@ -738,6 +750,7 @@ function createApp(opts) {
 
       await fs.mkdir(contextResult.targetPath, { recursive: true });
       await fs.mkdir(contextResult.workspacePath, { recursive: true });
+      await fs.mkdir(path.dirname(contextResult.linkPath), { recursive: true });
 
       const stateResult = await inspectLinkState(contextResult);
       if (stateResult.state === "conflict") {
