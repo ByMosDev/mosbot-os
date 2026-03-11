@@ -1784,11 +1784,19 @@ describe('OpenClaw Routes', () => {
         ),
       ).toBe(true);
 
-      const revokeCall = clientQuery.mock.calls.find(
-        ([sql]) =>
-          String(sql).includes('UPDATE agent_api_keys') &&
-          String(sql).includes('SET revoked_at = NOW()'),
-      );
+      const queryCallGroups = [
+        pool.query.mock.calls || [],
+        ...(typeof clientQuery !== 'undefined' && clientQuery?.mock?.calls
+          ? [clientQuery.mock.calls]
+          : []),
+      ];
+      const revokeCall = queryCallGroups
+        .flat()
+        .find(
+          ([sql]) =>
+            String(sql).includes('UPDATE agent_api_keys') &&
+            String(sql).includes('SET revoked_at = NOW()'),
+        );
       expect(revokeCall).toBeDefined();
       expect(revokeCall[1]).toEqual([['key-existing']]);
     });
