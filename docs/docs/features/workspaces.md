@@ -19,6 +19,13 @@ Each agent has its own workspace directory in the OpenClaw filesystem. A typical
 
 ```text
 workspace-coo/
+├── tools/
+│   ├── mosbot-auth      ← auth/token helper
+│   ├── mosbot-task      ← task board helper
+│   └── INTEGRATION.md   ← usage guide
+├── TOOLS.md             ← workspace-local tool notes
+├── BOOTSTRAP.md         ← first-run setup checklist (agent removes after completion)
+├── mosbot.env           ← MosBot API credentials (when key provisioning succeeds)
 ├── memory/
 │   ├── 2026-03-01.md    ← daily memory files
 │   └── 2026-02-28.md
@@ -34,6 +41,9 @@ skills/                  ← shared skills (all agents)
 docs/                    ← shared documentation
 projects/                ← shared project files
 ```
+
+The `tools/*`, `TOOLS.md`, and `BOOTSTRAP.md` files are seeded by MosBot during agent create and
+re-bootstrap flows.
 
 ## Browsing files
 

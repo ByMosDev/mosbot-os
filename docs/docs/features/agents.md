@@ -13,26 +13,20 @@ configured, what each one is responsible for, and their current status.
 
 ## How it works
 
-The agents page operates in two modes:
+The Agents page combines two sources:
 
-### Automatic mode (default)
+- **OpenClaw runtime config** (`openclaw.json`) for agent runtime definitions
+- **MosBot DB metadata** for display names, hierarchy (`reportsTo`), and status metadata
 
-When you define agents in the `agents.list` of your `openclaw.json`, they appear on the agents page
-automatically as a flat list. No extra configuration needed — this is the simplest way to get
-started, even with a single agent.
+MosBot also synthesizes an implicit `main` agent when it is not explicitly present in
+`agents.list`, so the dashboard always has a stable primary node.
 
 Each agent card shows:
 
-- Agent name and emoji (from `identity` fields)
-- Role description (from `identity.theme`)
+- Agent name and emoji (runtime `identity` + DB metadata fallback)
+- Role description (typically from `identity.theme`)
 - Current status badge
 - Model information
-
-### Custom hierarchy mode
-
-For more complex setups, create an `agents.json` file in your workspace to define a hierarchical
-structure with reporting relationships and departments. This is optional and intended for power users
-who want to organize agents into teams.
 
 ## Status badges
 
@@ -47,29 +41,42 @@ Each agent node displays a status badge:
 
 The status is updated in real-time based on data from the OpenClaw Gateway.
 
-## Adding agents
+## Managing agents
 
-Agents appear on the agents page automatically based on the `agents.list` in `openclaw.json`. To add
-a new agent:
+Only **owner** and **admin** roles can manage agent lifecycle actions from the Agents page.
 
-1. Add the agent definition to `openclaw.json` (see
-   [Configuration Reference](../configuration/openclaw-json#agentslist))
-2. The agent will appear on the agents page on the next refresh
+### Add Agent
 
-Alternatively, admins can use the **Add Agent** button in the dashboard to create agents through the
-UI.
+`Add Agent` creates a runtime agent entry and seeds first-run workspace assets. For each new agent,
+MosBot provisions:
 
-## Custom hierarchy with agents.json
+- `<workspace>/tools/mosbot-auth`
+- `<workspace>/tools/mosbot-task`
+- `<workspace>/tools/INTEGRATION.md`
+- `<workspace>/TOOLS.md`
+- `<workspace>/BOOTSTRAP.md`
+- `<workspace>/mosbot.env` (only when a new API key is created)
 
-For custom hierarchy, create an `agents.json` file in the workspace with:
+This implements the issue #12/#13 onboarding flow: credentials + toolkit + bootstrap guidance are
+ready immediately after create.
 
-- **`leadership`** — agents with `id`, `title` (optional), `displayName`, `label`, `status`, and
-  `reportsTo` fields to define reporting relationships
-- **`departments`** — organizational groups with `id`, `name`, `leadId`, and `subagents`
-- **`subagents`** — team members within departments
+### Re-bootstrap Agent
 
-The `reportsTo` field creates the tree hierarchy. Agents without `reportsTo` appear at the top
-level.
+`Re-bootstrap` re-seeds toolkit/bootstrap files for an existing agent and triggers bootstrap
+execution again. Use this for drift recovery or externally created agents.
+
+Notes:
+
+- Re-bootstrap uses the agent's configured workspace path.
+- MosBot keeps **at most one active API key per agent**.
+- Existing active keys are reused; MosBot does not rotate keys on each re-bootstrap.
+- `mosbot.env` is written only when a new key is created.
+- Backend does not delete `BOOTSTRAP.md`; the agent removes it after completing setup.
+
+### Agent hierarchy
+
+Hierarchy is driven by agent metadata (`reportsTo`) stored in MosBot and shown as a tree when
+available. If no hierarchy metadata exists, the page renders a flat list.
 
 ## Single agent view
 

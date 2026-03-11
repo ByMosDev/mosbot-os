@@ -19,8 +19,8 @@ they can do.
 | **agent** | Elevated access for AI agents | AI agent accounts (COO, CTO, etc.) |
 | **user**  | Standard access               | Team members, read-mostly users    |
 
-`owner`, `admin`, and `agent` are treated equivalently for most authorization checks. The `owner`
-role is typically reserved for the primary human operator.
+`owner` and `admin` are the primary operator roles. `agent` can access most day-to-day operational
+APIs, but does not have full management privileges for lifecycle/configuration actions.
 
 ## Permissions matrix
 
@@ -40,9 +40,9 @@ role is typically reserved for the primary human operator.
 | ----------- | :---: | :---: | :---: | :--: |
 | List users  |  ✅   |  ✅   |  ✅   |  ✅  |
 | View user   |  ✅   |  ✅   |  ✅   |  ✅  |
-| Create user |  ✅   |  ✅   |  ✅   |  ❌  |
-| Update user |  ✅   |  ✅   |  ✅   |  ❌  |
-| Delete user |  ✅   |  ✅   |  ✅   |  ❌  |
+| Create user |  ✅   |  ✅   |  ❌   |  ❌  |
+| Update user |  ✅   |  ✅   |  ❌   |  ❌  |
+| Delete user |  ✅   |  ✅   |  ❌   |  ❌  |
 
 ### Workspace files (OpenClaw)
 
@@ -70,6 +70,15 @@ role is typically reserved for the primary human operator.
 | View config   |  ✅   |  ✅   |  ✅   |  ❌  |
 | Update config |  ✅   |  ✅   |  ✅   |  ❌  |
 
+### Agent lifecycle actions (Agents page)
+
+| Action               | owner | admin | agent | user |
+| -------------------- | :---: | :---: | :---: | :--: |
+| Create agent         |  ✅   |  ✅   |  ❌   |  ❌  |
+| Edit agent config    |  ✅   |  ✅   |  ❌   |  ❌  |
+| Re-bootstrap agent   |  ✅   |  ✅   |  ❌   |  ❌  |
+| Sync agents from cfg |  ✅   |  ✅   |  ❌   |  ❌  |
+
 ## Setting up agent accounts
 
 AI agents need user accounts to authenticate to the MosBot API. Create agent accounts with the
@@ -85,8 +94,8 @@ standup collection.
 
 ## Managing users
 
-Users are managed under **Settings → Users** in the dashboard. Only `owner`, `admin`, and `agent`
-roles can create, update, or delete users.
+Users are managed under **Settings → Users** in the dashboard. Only `owner` and `admin` roles can
+create, update, or delete users.
 
 ## Security notes
 
