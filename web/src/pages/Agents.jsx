@@ -53,9 +53,11 @@ export default function Agents() {
   const [selectedAgentId, setSelectedAgentId] = useState(null);
   const [agentModalMode, setAgentModalMode] = useState('edit'); // 'edit' or 'create'
   const [isSyncingAgents, setIsSyncingAgents] = useState(false);
-  const [rebootstrappingAgentId, setRebootstrappingAgentId] = useState(null);
+  const [rebootstrappingByAgentId, setRebootstrappingByAgentId] = useState({});
+  const rebootstrappingRef = useRef(new Set());
   const pollingRef = useRef(null);
-  const { isAdmin } = useAuthStore();
+  const { user } = useAuthStore();
+  const canManageAgents = user?.role === 'admin' || user?.role === 'owner';
 
   // Fetch agents config
   const loadConfig = async () => {
@@ -164,8 +166,10 @@ export default function Agents() {
 
   const handleRebootstrapAgent = async (agentId) => {
     if (!agentId) return;
+    if (rebootstrappingRef.current.has(agentId)) return;
 
-    setRebootstrappingAgentId(agentId);
+    rebootstrappingRef.current.add(agentId);
+    setRebootstrappingByAgentId((prev) => ({ ...prev, [agentId]: true }));
     try {
       await rebootstrapAgent(agentId);
       await loadConfig();
@@ -176,7 +180,13 @@ export default function Agents() {
         err?.response?.data?.error?.message || err.message || `Failed to re-bootstrap ${agentId}`,
       );
     } finally {
-      setRebootstrappingAgentId(null);
+      rebootstrappingRef.current.delete(agentId);
+      setRebootstrappingByAgentId((prev) => {
+        if (!prev[agentId]) return prev;
+        const next = { ...prev };
+        delete next[agentId];
+        return next;
+      });
     }
   };
 
@@ -258,7 +268,7 @@ export default function Agents() {
   const AgentCard = ({ leader, large = false }) => {
     const status = getNodeStatus(leader.label);
     const { border: borderColor, bg: bgColor } = getAgentColor(leader.id);
-    const canEdit = isAdmin();
+    const canEdit = canManageAgents;
 
     return (
       <div className={`relative ${large ? 'w-[400px]' : 'w-[300px]'} group`}>
@@ -292,12 +302,12 @@ export default function Agents() {
                 <>
                   <button
                     onClick={() => handleRebootstrapAgent(leader.id)}
-                    disabled={rebootstrappingAgentId === leader.id}
+                    disabled={Boolean(rebootstrappingByAgentId[leader.id])}
                     className="opacity-0 group-hover:opacity-100 transition-opacity h-[21px] px-1.5 bg-dark-800/70 hover:bg-dark-700 rounded border border-dark-600 hover:border-dark-500 flex items-center justify-center disabled:opacity-50"
                     title="Re-bootstrap agent"
                   >
                     <ArrowPathIcon
-                      className={`w-3 h-3 text-dark-300 ${rebootstrappingAgentId === leader.id ? 'animate-spin' : ''}`}
+                      className={`w-3 h-3 text-dark-300 ${rebootstrappingByAgentId[leader.id] ? 'animate-spin' : ''}`}
                     />
                   </button>
                   <button
@@ -466,7 +476,7 @@ export default function Agents() {
         subtitle="Your agent team and status overview"
         onRefresh={handleRefresh}
       >
-        {isAdmin() && (
+        {canManageAgents && (
           <div className="flex items-center gap-2">
             <button
               onClick={handleSyncAgents}
@@ -519,7 +529,7 @@ export default function Agents() {
                 <code className="text-dark-300">openclaw.json</code> and they will appear here
                 automatically. Custom hierarchy metadata is stored in the database.
               </p>
-              {isAdmin() && (
+              {canManageAgents && (
                 <button
                   onClick={handleAddAgent}
                   className="btn-primary inline-flex items-center gap-2"
@@ -538,7 +548,7 @@ export default function Agents() {
                 <StatusBadge status={getNodeStatus(leadership[0].label)} />
               </div>
               <AgentCard leader={leadership[0]} large={true} />
-              {isAdmin() && (
+              {canManageAgents && (
                 <button
                   onClick={handleAddAgent}
                   className="mt-8 btn-secondary inline-flex items-center gap-2 text-sm"

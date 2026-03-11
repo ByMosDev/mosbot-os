@@ -1528,6 +1528,21 @@ router.post('/agents/config', requireAuth, requireAdmin, async (req, res, next) 
       });
     }
 
+    const openclawData = await makeOpenClawRequest('GET', '/files/content?path=/openclaw.json');
+    const openclawConfig = parseOpenClawConfig(openclawData.content);
+    if (!openclawConfig.agents) openclawConfig.agents = {};
+    if (!Array.isArray(openclawConfig.agents.list)) openclawConfig.agents.list = [];
+
+    if (openclawConfig.agents.list.some((a) => a.id === agentData.id)) {
+      return res.status(409).json({
+        error: {
+          message: `Agent "${agentData.id}" already exists in OpenClaw config`,
+          status: 409,
+          code: 'AGENT_EXISTS',
+        },
+      });
+    }
+
     const dbStatus = 'active';
     const dbActive = true;
 
@@ -1620,21 +1635,6 @@ router.post('/agents/config', requireAuth, requireAdmin, async (req, res, next) 
           message: `workspace bootstrap failed before agent creation: ${workspaceError.message}`,
           status: 500,
           code: 'WORKSPACE_BOOTSTRAP_FAILED',
-        },
-      });
-    }
-
-    const openclawData = await makeOpenClawRequest('GET', '/files/content?path=/openclaw.json');
-    const openclawConfig = parseOpenClawConfig(openclawData.content);
-    if (!openclawConfig.agents) openclawConfig.agents = {};
-    if (!Array.isArray(openclawConfig.agents.list)) openclawConfig.agents.list = [];
-
-    if (openclawConfig.agents.list.some((a) => a.id === agentData.id)) {
-      return res.status(409).json({
-        error: {
-          message: `Agent "${agentData.id}" already exists in OpenClaw config`,
-          status: 409,
-          code: 'AGENT_EXISTS',
         },
       });
     }
@@ -1781,11 +1781,32 @@ router.post('/agents/config/:agentId/rebootstrap', requireAuth, requireAdmin, as
       });
     }
 
+    if (req.user.role === 'agent') {
+      return res.status(403).json({
+        error: {
+          message: 'System configuration files can only be modified by admin or owner roles',
+          status: 403,
+          code: 'INSUFFICIENT_PERMISSIONS',
+        },
+      });
+    }
+
     const openclawData = await makeOpenClawRequest('GET', '/files/content?path=/openclaw.json');
     const openclawConfig = parseOpenClawConfig(openclawData.content);
     const agentsList = Array.isArray(openclawConfig?.agents?.list) ? openclawConfig.agents.list : [];
+    const agentsDefaults = openclawConfig?.agents?.defaults || {};
 
-    const runtimeAgent = agentsList.find((a) => a?.id === agentId);
+    let runtimeAgent = agentsList.find((a) => a?.id === agentId);
+    if (!runtimeAgent && agentId === 'main') {
+      runtimeAgent = {
+        id: 'main',
+        default: true,
+        workspace: agentsDefaults.workspace || '/workspace',
+        identity: agentsDefaults.identity || {},
+        model: agentsDefaults.model || {},
+      };
+    }
+
     if (!runtimeAgent) {
       return res.status(404).json({
         error: {
@@ -1798,6 +1819,8 @@ router.post('/agents/config/:agentId/rebootstrap', requireAuth, requireAdmin, as
 
     const dbStatus = 'active';
     const dbActive = true;
+    const runtimeIdentity = runtimeAgent?.identity || {};
+    const hasExplicitIdentityEmoji = Object.prototype.hasOwnProperty.call(runtimeIdentity, 'emoji');
 
     const agentData = {
       id: agentId,
@@ -1806,11 +1829,19 @@ router.post('/agents/config/:agentId/rebootstrap', requireAuth, requireAdmin, as
       description: runtimeAgent?.identity?.theme || '',
       identityName: runtimeAgent?.identity?.name || agentId,
       identityTheme: runtimeAgent?.identity?.theme || '',
-      identityEmoji: runtimeAgent?.identity?.emoji || '🤖',
+      identityEmoji: hasExplicitIdentityEmoji ? runtimeAgent?.identity?.emoji : undefined,
       modelPrimary: runtimeAgent?.model?.primary || null,
       modelFallback1: runtimeAgent?.model?.fallbacks?.[0] || null,
       modelFallback2: runtimeAgent?.model?.fallbacks?.[1] || null,
     };
+
+    const agentMeta = {
+      label: `agent:${agentData.id}:main`,
+      description: agentData.description || '',
+    };
+    if (hasExplicitIdentityEmoji) {
+      agentMeta.emoji = agentData.identityEmoji;
+    }
 
     // Ensure DB row exists (agent_api_keys FK depends on this).
     await pool.query(
@@ -1830,11 +1861,7 @@ router.post('/agents/config/:agentId/rebootstrap', requireAuth, requireAdmin, as
         agentData.title,
         dbStatus,
         null,
-        JSON.stringify({
-          label: `agent:${agentData.id}:main`,
-          description: agentData.description || '',
-          emoji: agentData.identityEmoji || null,
-        }),
+        JSON.stringify(agentMeta),
         dbActive,
       ],
     );
@@ -1867,8 +1894,18 @@ router.post('/agents/config/:agentId/rebootstrap', requireAuth, requireAdmin, as
       });
     }
 
-    const safeAgentId = normalizeAgentIdForPath(agentData.id);
-    const workspaceRoot = safeAgentId === 'main' ? '/workspace' : `/workspace-${safeAgentId}`;
+    let workspaceRoot;
+    try {
+      workspaceRoot = normalizeRemapAndValidateWorkspacePath(resolveAgentWorkspacePath(runtimeAgent));
+    } catch (workspacePathError) {
+      return res.status(400).json({
+        error: {
+          message: `invalid workspace path for agent "${agentId}": ${workspacePathError.message}`,
+          status: 400,
+          code: 'INVALID_WORKSPACE_PATH',
+        },
+      });
+    }
 
     try {
       await writeAgentToolkit(workspaceRoot);

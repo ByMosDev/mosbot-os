@@ -1111,6 +1111,50 @@ describe('OpenClaw Routes', () => {
       expect(response.status).toBe(201);
     });
 
+    it('should return 409 before side effects when agent already exists in openclaw config', async () => {
+      const token = getToken('admin-id', 'admin');
+
+      global.fetch = jest.fn().mockImplementation(async (_url, options) => {
+        if (options?.method === 'GET') {
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({
+              content: JSON.stringify({
+                agents: {
+                  list: [{ id: 'existing-agent' }],
+                },
+              }),
+            }),
+            text: async () => 'OK',
+          };
+        }
+
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ ok: true }),
+          text: async () => 'OK',
+        };
+      });
+
+      const response = await request(app)
+        .post('/api/v1/openclaw/agents/config')
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          id: 'existing-agent',
+          displayName: 'Existing Agent',
+        });
+
+      expect(response.status).toBe(409);
+      expect(response.body.error.code).toBe('AGENT_EXISTS');
+      expect(pool.query).not.toHaveBeenCalled();
+      expect(gatewayWsRpc).not.toHaveBeenCalledWith('config.apply', expect.anything());
+
+      const nonGetCalls = global.fetch.mock.calls.filter(([, opts]) => opts?.method !== 'GET');
+      expect(nonGetCalls).toHaveLength(0);
+    });
+
     it('should deny agent role from creating', async () => {
       const token = getToken('agent-id', 'agent');
 
@@ -1124,6 +1168,204 @@ describe('OpenClaw Routes', () => {
         });
 
       expect(response.status).toBe(403);
+    });
+  });
+
+  describe('POST /api/v1/openclaw/agents/config/:agentId/rebootstrap', () => {
+    it('should rebootstrap an existing configured agent', async () => {
+      const token = getToken('admin-id', 'admin');
+      const writePaths = [];
+
+      global.fetch = jest.fn().mockImplementation(async (url, options) => {
+        if (
+          options?.method === 'GET' &&
+          (String(url).includes('/files/content?path=/openclaw.json') ||
+            String(url).includes('/files/content?path=%2Fopenclaw.json'))
+        ) {
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({
+              content: JSON.stringify({
+                agents: {
+                  list: [
+                    {
+                      id: 'coo',
+                      workspace: '/workspace-custom-coo',
+                      identity: { name: 'COO', theme: 'Operations' },
+                      model: { primary: 'openrouter/model-a' },
+                    },
+                  ],
+                },
+              }),
+            }),
+            text: async () => 'OK',
+          };
+        }
+
+        if ((options?.method === 'PUT' || options?.method === 'POST') && String(url).endsWith('/files')) {
+          const body = JSON.parse(options.body || '{}');
+          writePaths.push(body.path);
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({ ok: true }),
+            text: async () => 'OK',
+          };
+        }
+
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ ok: true }),
+          text: async () => 'OK',
+        };
+      });
+
+      const response = await request(app)
+        .post('/api/v1/openclaw/agents/config/coo/rebootstrap')
+        .set('Authorization', `Bearer ${token}`);
+
+      expect(response.status).toBe(200);
+      expect(response.body.data.agentId).toBe('coo');
+      expect(response.body.data.updatedFiles).toContain('/workspace-custom-coo/BOOTSTRAP.md');
+      expect(writePaths).toEqual(
+        expect.arrayContaining([
+          '/workspace-custom-coo/tools/mosbot-auth',
+          '/workspace-custom-coo/tools/mosbot-task',
+          '/workspace-custom-coo/tools/INTEGRATION.md',
+          '/workspace-custom-coo/TOOLS.md',
+          '/workspace-custom-coo/BOOTSTRAP.md',
+          '/workspace-custom-coo/mosbot.env',
+        ]),
+      );
+
+      const agentsUpsertCall = pool.query.mock.calls.find(([sql]) =>
+        String(sql).includes('INSERT INTO agents (agent_id, name, title, status, reports_to, meta, active)'),
+      );
+      expect(agentsUpsertCall).toBeDefined();
+      const metaJson = agentsUpsertCall[1][5];
+      const parsedMeta = JSON.parse(metaJson);
+      expect(parsedMeta).toEqual({
+        label: 'agent:coo:main',
+        description: 'Operations',
+      });
+      expect(invokeTool).toHaveBeenCalledWith(
+        'sessions_send',
+        expect.objectContaining({
+          sessionKey: 'agent:coo:main',
+        }),
+        expect.objectContaining({
+          sessionKey: 'main',
+        }),
+      );
+    });
+
+    it('should allow implicit main rebootstrap when main is not in agents list', async () => {
+      const token = getToken('admin-id', 'admin');
+      const writePaths = [];
+
+      global.fetch = jest.fn().mockImplementation(async (url, options) => {
+        if (
+          options?.method === 'GET' &&
+          (String(url).includes('/files/content?path=/openclaw.json') ||
+            String(url).includes('/files/content?path=%2Fopenclaw.json'))
+        ) {
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({
+              content: JSON.stringify({
+                agents: {
+                  defaults: {
+                    workspace: '/workspace-main-custom',
+                    identity: { name: 'Main', theme: 'Default Ops' },
+                  },
+                  list: [{ id: 'coo' }],
+                },
+              }),
+            }),
+            text: async () => 'OK',
+          };
+        }
+
+        if ((options?.method === 'PUT' || options?.method === 'POST') && String(url).endsWith('/files')) {
+          const body = JSON.parse(options.body || '{}');
+          writePaths.push(body.path);
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({ ok: true }),
+            text: async () => 'OK',
+          };
+        }
+
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ ok: true }),
+          text: async () => 'OK',
+        };
+      });
+
+      const response = await request(app)
+        .post('/api/v1/openclaw/agents/config/main/rebootstrap')
+        .set('Authorization', `Bearer ${token}`);
+
+      expect(response.status).toBe(200);
+      expect(response.body.data.agentId).toBe('main');
+      expect(response.body.data.updatedFiles).toContain('/workspace-main-custom/BOOTSTRAP.md');
+      expect(writePaths).toEqual(
+        expect.arrayContaining([
+          '/workspace-main-custom/tools/mosbot-auth',
+          '/workspace-main-custom/BOOTSTRAP.md',
+        ]),
+      );
+    });
+
+    it('should return 404 when rebootstrap target is missing', async () => {
+      const token = getToken('admin-id', 'admin');
+
+      global.fetch = jest.fn().mockImplementation(async (_url, options) => {
+        if (options?.method === 'GET') {
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({
+              content: JSON.stringify({
+                agents: { list: [{ id: 'coo' }] },
+              }),
+            }),
+            text: async () => 'OK',
+          };
+        }
+
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ ok: true }),
+          text: async () => 'OK',
+        };
+      });
+
+      const response = await request(app)
+        .post('/api/v1/openclaw/agents/config/cto/rebootstrap')
+        .set('Authorization', `Bearer ${token}`);
+
+      expect(response.status).toBe(404);
+      expect(response.body.error.code).toBe('AGENT_NOT_FOUND');
+      expect(pool.query).not.toHaveBeenCalled();
+    });
+
+    it('should deny agent role from rebootstrap', async () => {
+      const token = getToken('agent-id', 'agent');
+
+      const response = await request(app)
+        .post('/api/v1/openclaw/agents/config/coo/rebootstrap')
+        .set('Authorization', `Bearer ${token}`);
+
+      expect(response.status).toBe(403);
+      expect(response.body.error.code).toBe('INSUFFICIENT_PERMISSIONS');
     });
   });
 
