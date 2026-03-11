@@ -172,7 +172,11 @@ export const syncAgentsFromOpenClaw = async () => {
 };
 
 export const rebootstrapAgent = async (agentId) => {
-  const response = await api.post(`/openclaw/agents/config/${encodeURIComponent(agentId)}/rebootstrap`);
+  const response = await api.post(
+    `/openclaw/agents/config/${encodeURIComponent(agentId)}/rebootstrap`,
+    null,
+    { timeout: OPENCLAW_TIMEOUT },
+  );
   return response.data.data;
 };
 
@@ -210,7 +214,6 @@ export const unassignAgentFromProject = async (projectId, agentId) => {
   );
   return response.data?.data || null;
 };
-
 // OpenClaw Subagents API - returns object with { running, queued, completed, retention }
 export const getSubagents = async () => {
   const response = await api.get('/openclaw/subagents');

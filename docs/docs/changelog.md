@@ -52,6 +52,10 @@ For application-level changes, see the changelogs in the respective repositories
   root, `path=/` denied)
 - Documented system-managed docs-link reconciliation lifecycle (startup + agent create/update,
   non-fatal conflict handling)
+- Updated docs for agent onboarding lifecycle (issues #12/#13): toolkit seeding, `mosbot.env`,
+  `BOOTSTRAP.md`, and bootstrap trigger behavior
+- Updated docs for re-bootstrap lifecycle (issue #31): admin+owner access, workspace reseeding, and
+  single-active-key policy
 
 ### mosbot-dashboard
 
@@ -78,6 +82,8 @@ For application-level changes, see the changelogs in the respective repositories
 - Workspace docs clarified that dashboard page loads do not trigger docs-link write operations
 - Projects page upgraded from file browser-only to project registry + agent assignment UI
 - Agents page now shows project badges and re-bootstrap action guidance
+- Updated Agents/Workspaces docs to reflect current create/re-bootstrap UX and in-progress
+  visibility behavior
 
 ---
 

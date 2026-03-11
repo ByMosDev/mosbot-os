@@ -7,7 +7,7 @@ const config = require('../config');
 const logger = require('../utils/logger');
 const path = require('path');
 const pool = require('../db/pool');
-const { requireAdmin } = require('./auth');
+const { requireAdmin, requireManageUsers } = require('./auth');
 const {
   makeOpenClawRequest,
   ensureWorkspaceLink,
@@ -74,6 +74,140 @@ function generateApiKey() {
   return `mba_${random}`;
 }
 
+const AGENT_ID_REGEX = /^[a-z0-9_-]+$/;
+
+function isValidAgentId(agentId) {
+  return typeof agentId === 'string' && AGENT_ID_REGEX.test(agentId);
+}
+
+async function getOrCreateSingleAgentApiKey({ agentId, createdByUserId, label }) {
+  const activeKeys = await pool.query(
+    `SELECT id
+     FROM agent_api_keys
+     WHERE agent_id = $1 AND revoked_at IS NULL
+     ORDER BY created_at DESC, id DESC`,
+    [agentId],
+  );
+
+  const activeRows = activeKeys.rows || [];
+  const warnings = [];
+
+  if (activeRows.length > 0) {
+    if (activeRows.length > 1) {
+      const staleIds = activeRows.slice(1).map((row) => row.id).filter(Boolean);
+      if (staleIds.length > 0) {
+        await pool.query(
+          `UPDATE agent_api_keys
+           SET revoked_at = NOW()
+           WHERE id = ANY($1::uuid[])`,
+          [staleIds],
+        );
+        warnings.push('revoked duplicate active API keys and kept the most recent key');
+      }
+    }
+
+    return {
+      created: false,
+      keyId: activeRows[0]?.id || null,
+      apiKey: null,
+      warnings,
+    };
+  }
+
+  const rawKey = generateApiKey();
+  const keyHash = hashApiKey(rawKey);
+  const keyPrefix = rawKey.slice(0, 12);
+
+  let insertResult;
+  try {
+    insertResult = await pool.query(
+      `INSERT INTO agent_api_keys (agent_id, key_hash, key_prefix, label, created_by_user_id)
+       VALUES ($1, $2, $3, $4, $5)
+       RETURNING id`,
+      [agentId, keyHash, keyPrefix, label, createdByUserId],
+    );
+  } catch (insertError) {
+    // Concurrency safety: when active-key uniqueness is enforced by DB,
+    // another request may have inserted the active key between our read and insert.
+    if (insertError.code === '23505') {
+      const refreshed = await pool.query(
+        `SELECT id
+         FROM agent_api_keys
+         WHERE agent_id = $1 AND revoked_at IS NULL
+         ORDER BY created_at DESC, id DESC
+         LIMIT 1`,
+        [agentId],
+      );
+      const keyId = refreshed.rows?.[0]?.id || null;
+      if (keyId) {
+        return {
+          created: false,
+          keyId,
+          apiKey: null,
+          warnings: ['detected concurrent API key provisioning; reusing existing active key'],
+        };
+      }
+    }
+    throw insertError;
+  }
+
+  return {
+    created: true,
+    keyId: insertResult.rows?.[0]?.id || null,
+    apiKey: rawKey,
+    warnings,
+  };
+}
+
+async function deleteAgentApiKeyById(keyId) {
+  if (!keyId) return;
+  await pool.query('DELETE FROM agent_api_keys WHERE id = $1', [keyId]);
+}
+
+async function revokeAgentApiKeysById(keyIds) {
+  if (!Array.isArray(keyIds) || keyIds.length === 0) return;
+  const uniqueIds = [...new Set(keyIds.filter(Boolean))];
+  if (uniqueIds.length === 0) return;
+  await pool.query(
+    `UPDATE agent_api_keys
+     SET revoked_at = NOW()
+     WHERE id = ANY($1::uuid[])`,
+    [uniqueIds],
+  );
+}
+
+async function cleanupProvisionedApiKeyArtifacts({
+  createdApiKeyId,
+  workspaceRoot,
+  envWasWritten,
+  agentId,
+  flow,
+}) {
+  if (!createdApiKeyId) return;
+
+  try {
+    await deleteAgentApiKeyById(createdApiKeyId);
+  } catch (cleanupError) {
+    logger.warn(`Failed to cleanup ${flow} API key after provisioning failure`, {
+      agentId,
+      keyId: createdApiKeyId,
+      error: cleanupError.message,
+    });
+  }
+
+  if (!envWasWritten) return;
+
+  try {
+    await makeOpenClawRequest('DELETE', `/files?path=${encodeURIComponent(`${workspaceRoot}/mosbot.env`)}`);
+  } catch (envCleanupError) {
+    logger.warn(`Failed to cleanup ${flow} mosbot.env after provisioning failure`, {
+      agentId,
+      workspaceRoot,
+      error: envCleanupError.message,
+    });
+  }
+}
+
 async function upsertWorkspaceFile(path, content, encoding = 'utf8') {
   try {
     return await makeOpenClawRequest('PUT', '/files', { path, content, encoding });
@@ -82,6 +216,73 @@ async function upsertWorkspaceFile(path, content, encoding = 'utf8') {
       return makeOpenClawRequest('POST', '/files', { path, content, encoding });
     }
     throw error;
+  }
+}
+
+async function workspaceFileExists(path) {
+  try {
+    await makeOpenClawRequest('GET', `/files/content?path=${encodeURIComponent(path)}`);
+    return true;
+  } catch (error) {
+    if (error?.status === 404) {
+      return false;
+    }
+    throw error;
+  }
+}
+
+async function rotateSingleAgentApiKey({ agentId, createdByUserId, label }) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const activeKeys = await client.query(
+      `SELECT id
+       FROM agent_api_keys
+       WHERE agent_id = $1 AND revoked_at IS NULL
+       ORDER BY created_at DESC, id DESC`,
+      [agentId],
+    );
+
+    const activeRows = activeKeys.rows || [];
+    const activeIds = activeRows.map((row) => row.id).filter(Boolean);
+    const warnings = [];
+
+    const rawKey = generateApiKey();
+    const keyHash = hashApiKey(rawKey);
+    const keyPrefix = rawKey.slice(0, 12);
+
+    const insertResult = await client.query(
+      `INSERT INTO agent_api_keys (agent_id, key_hash, key_prefix, label, created_by_user_id)
+       VALUES ($1, $2, $3, $4, $5)
+       RETURNING id`,
+      [agentId, keyHash, keyPrefix, label, createdByUserId],
+    );
+
+    await client.query('COMMIT');
+
+    if (activeIds.length > 0) {
+      warnings.push(
+        'created replacement API key to restore missing mosbot.env; revoking previous keys after provisioning',
+      );
+    }
+
+    return {
+      created: true,
+      keyId: insertResult.rows?.[0]?.id || null,
+      apiKey: rawKey,
+      warnings,
+      previousActiveKeyIds: activeIds,
+    };
+  } catch (error) {
+    try {
+      await client.query('ROLLBACK');
+    } catch (rollbackError) {
+      logger.error('Failed to rollback agent API key rotation transaction', rollbackError);
+    }
+    throw error;
+  } finally {
+    client.release();
   }
 }
 
@@ -339,6 +540,14 @@ async function writeAgentToolkit(workspaceRoot) {
 }
 
 function buildAgentBootstrapContent(agentData = {}) {
+  const flow = agentData.flow === 're-bootstrap' ? 're-bootstrap' : 'create';
+  const introLine =
+    flow === 're-bootstrap'
+      ? 'You are an existing agent workspace running a re-bootstrap. Complete the checklist below before taking new work.'
+      : 'You are a newly created agent workspace. Complete the setup below before taking work.';
+  const profileHeading =
+    flow === 're-bootstrap' ? 'Agent profile (re-bootstrap snapshot)' : 'Agent profile (create snapshot)';
+
   const profile = {
     id: agentData.id || '',
     displayName: agentData.displayName || '',
@@ -358,9 +567,9 @@ function buildAgentBootstrapContent(agentData = {}) {
 
   return `# BOOTSTRAP.md
 
-You are a newly created agent workspace. Complete the setup below before taking work.
+${introLine}
 
-## Agent profile (from create form)
+## ${profileHeading}
 
 \`\`\`json
 ${JSON.stringify(profile, null, 2)}
@@ -480,41 +689,6 @@ async function runBootstrapForNewAgent(agentId) {
     ...sendResult,
     transport: 'chat.send',
   };
-}
-
-async function maybeFinalizeBootstrapFile(workspaceRoot, { attempts = 6, delayMs = 3000 } = {}) {
-  const requiredFiles = ['AGENTS.md', 'SOUL.md', 'IDENTITY.md', 'USER.md'];
-  const bootstrapPath = `${workspaceRoot}/BOOTSTRAP.md`;
-
-  const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-
-  for (let attempt = 1; attempt <= attempts; attempt += 1) {
-    const listing = await makeOpenClawRequest(
-      'GET',
-      `/files?path=${encodeURIComponent(workspaceRoot)}&recursive=false`,
-    );
-    const files = Array.isArray(listing?.files) ? listing.files : [];
-    const names = new Set(files.map((f) => f.name));
-
-    const hasBootstrap = names.has('BOOTSTRAP.md');
-    if (!hasBootstrap) {
-      return { status: 'already_removed', attempt };
-    }
-
-    const missingRequired = requiredFiles.filter((name) => !names.has(name));
-    if (missingRequired.length === 0) {
-      await makeOpenClawRequest('DELETE', `/files?path=${encodeURIComponent(bootstrapPath)}`);
-      return { status: 'removed_by_backend', attempt };
-    }
-
-    if (attempt < attempts) {
-      await wait(delayMs);
-    } else {
-      return { status: 'still_present', missingRequired, attempt };
-    }
-  }
-
-  return { status: 'unknown' };
 }
 
 function normalizeAgentIdForPath(agentId) {
@@ -776,6 +950,12 @@ function isAllowedWorkspacePath(workspacePath) {
   if (workspacePath.startsWith('/workspace-') || /^\/workspace-[a-z]+(\/|$)/.test(workspacePath))
     return true;
 
+  return false;
+}
+
+function isAllowedAgentWorkspaceProvisionPath(workspacePath) {
+  if (workspacePath === '/workspace' || workspacePath.startsWith('/workspace/')) return true;
+  if (/^\/workspace-[a-z0-9_-]+(\/.*)?$/.test(workspacePath)) return true;
   return false;
 }
 
@@ -2132,6 +2312,17 @@ router.post('/agents/config', requireAuth, requireAdmin, async (req, res, next) 
       });
     }
 
+    if (!isValidAgentId(agentData.id)) {
+      return res.status(400).json({
+        error: {
+          message:
+            'id must be a valid slug (lowercase letters, numbers, hyphens, underscores)',
+          status: 400,
+          code: 'INVALID_AGENT_ID',
+        },
+      });
+    }
+
     if (agentData.status && agentData.status !== 'active') {
       return res.status(400).json({
         error: {
@@ -2147,9 +2338,6 @@ router.post('/agents/config', requireAuth, requireAdmin, async (req, res, next) 
     if (!openclawConfig.agents) openclawConfig.agents = {};
     if (!Array.isArray(openclawConfig.agents.list)) openclawConfig.agents.list = [];
 
-    const dbStatus = 'active';
-    const dbActive = true;
-
     if (openclawConfig.agents.list.some((a) => a.id === agentData.id)) {
       return res.status(409).json({
         error: {
@@ -2160,7 +2348,27 @@ router.post('/agents/config', requireAuth, requireAdmin, async (req, res, next) 
       });
     }
 
-    // Upsert DB metadata (no agents config writes)
+    const dbStatus = 'active';
+    const dbActive = true;
+    const existingAgentRow = await pool.query('SELECT 1 FROM agents WHERE agent_id = $1 LIMIT 1', [
+      agentData.id,
+    ]);
+    const dbAgentExistedBeforeCreate = (existingAgentRow.rowCount || 0) > 0;
+    const cleanupDbAgentRowIfCreated = async (reason) => {
+      if (dbAgentExistedBeforeCreate) return;
+
+      try {
+        await pool.query('DELETE FROM agents WHERE agent_id = $1', [agentData.id]);
+      } catch (dbCleanupError) {
+        logger.warn('Failed to cleanup agent DB row after create bootstrap failure', {
+          agentId: agentData.id,
+          reason,
+          error: dbCleanupError.message,
+        });
+      }
+    };
+
+    // Ensure DB agent row exists before API key bootstrap (FK on agent_api_keys.agent_id).
     await pool.query(
       `INSERT INTO agents (agent_id, name, title, status, reports_to, meta, active)
        VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7)
@@ -2187,6 +2395,118 @@ router.post('/agents/config', requireAuth, requireAdmin, async (req, res, next) 
         dbActive,
       ],
     );
+
+    // Prepare workspace + toolkit + bootstrap BEFORE mutating OpenClaw agent config.
+    // This avoids creating an agent runtime entry without a prepared workspace.
+    const setupWarnings = [];
+
+    const safeAgentId = normalizeAgentIdForPath(agentData.id);
+    const workspaceRoot = safeAgentId === 'main' ? '/workspace' : `/workspace-${safeAgentId}`;
+    req._agentWorkspaceRoot = workspaceRoot;
+    req._agentCreateApiKeyProvisioned = false;
+    let createdApiKeyId = null;
+    let updatedMosbotEnv = false;
+
+    try {
+      await writeAgentToolkit(workspaceRoot);
+    } catch (workspaceError) {
+      await cleanupDbAgentRowIfCreated('toolkit_write_failed');
+      logger.error('Workspace bootstrap failed before agent creation', {
+        agentId: agentData.id,
+        error: workspaceError.message,
+      });
+
+      return res.status(500).json({
+        error: {
+          message: `workspace bootstrap failed before agent creation: ${workspaceError.message}`,
+          status: 500,
+          code: 'WORKSPACE_BOOTSTRAP_FAILED',
+        },
+      });
+    }
+
+    try {
+      const apiKeyResult = await getOrCreateSingleAgentApiKey({
+        agentId: agentData.id,
+        createdByUserId: req.user.id,
+        label: 'bootstrap',
+      });
+
+      if (Array.isArray(apiKeyResult?.warnings) && apiKeyResult.warnings.length > 0) {
+        setupWarnings.push(...apiKeyResult.warnings);
+      }
+
+      if (apiKeyResult?.created && apiKeyResult?.apiKey) {
+        createdApiKeyId = apiKeyResult.keyId || null;
+
+        try {
+          await upsertWorkspaceFile(
+            `${workspaceRoot}/mosbot.env`,
+            buildAgentMosbotEnv({ req, agentId: agentData.id, apiKey: apiKeyResult.apiKey }),
+          );
+          req._agentCreateApiKeyProvisioned = true;
+          updatedMosbotEnv = true;
+        } catch (envWriteError) {
+          await cleanupProvisionedApiKeyArtifacts({
+            createdApiKeyId,
+            workspaceRoot,
+            envWasWritten: updatedMosbotEnv,
+            agentId: agentData.id,
+            flow: 'bootstrap',
+          });
+          await cleanupDbAgentRowIfCreated('mosbot_env_write_failed');
+          req._agentCreateApiKeyProvisioned = false;
+
+          return res.status(500).json({
+            error: {
+              message: `workspace bootstrap failed before agent creation: ${envWriteError.message}`,
+              status: 500,
+              code: 'WORKSPACE_BOOTSTRAP_FAILED',
+            },
+          });
+        }
+      }
+    } catch (apiKeyError) {
+      if (apiKeyError.code === '42P01') {
+        setupWarnings.push('agent_api_keys table not found; skipped API key bootstrap');
+      } else {
+        setupWarnings.push(`agent API key bootstrap failed: ${apiKeyError.message}`);
+      }
+      logger.warn('Failed to ensure bootstrap API key', {
+        agentId: agentData.id,
+        error: apiKeyError.message,
+        code: apiKeyError.code,
+      });
+    }
+
+    try {
+      await upsertWorkspaceFile(
+        `${workspaceRoot}/BOOTSTRAP.md`,
+        buildAgentBootstrapContent(agentData),
+      );
+    } catch (workspaceError) {
+      await cleanupProvisionedApiKeyArtifacts({
+        createdApiKeyId,
+        workspaceRoot,
+        envWasWritten: updatedMosbotEnv,
+        agentId: agentData.id,
+        flow: 'bootstrap',
+      });
+      await cleanupDbAgentRowIfCreated('bootstrap_file_write_failed');
+      req._agentCreateApiKeyProvisioned = false;
+      logger.error('Workspace bootstrap failed before agent creation', {
+        agentId: agentData.id,
+        error: workspaceError.message,
+      });
+
+      return res.status(500).json({
+        error: {
+          message: `workspace bootstrap failed before agent creation: ${workspaceError.message}`,
+          status: 500,
+          code: 'WORKSPACE_BOOTSTRAP_FAILED',
+        },
+      });
+    }
 
     {
       const fallbacks = [agentData.modelFallback1, agentData.modelFallback2].filter(Boolean);
@@ -2232,13 +2552,35 @@ router.post('/agents/config', requireAuth, requireAdmin, async (req, res, next) 
       openclawConfig.agents.list.push(newAgent);
 
       const openclawContent = JSON.stringify(openclawConfig, null, 2) + '\n';
-      const currentConfig = await gatewayWsRpc('config.get', {});
-      await gatewayWsRpc('config.apply', {
-        raw: openclawContent,
-        baseHash: currentConfig?.hash || null,
-        note: `Agent created via MosBot (${agentData.id}) by ${req.user.id}`,
-        restartDelayMs: 2000,
-      });
+      let configApplied = false;
+      try {
+        const currentConfig = await gatewayWsRpc('config.get', {});
+        await gatewayWsRpc('config.apply', {
+          raw: openclawContent,
+          baseHash: currentConfig?.hash || null,
+          note: `Agent created via MosBot (${agentData.id}) by ${req.user.id}`,
+          restartDelayMs: 2000,
+        });
+        configApplied = true;
+      } catch (configApplyError) {
+        await cleanupProvisionedApiKeyArtifacts({
+          createdApiKeyId,
+          workspaceRoot,
+          envWasWritten: updatedMosbotEnv,
+          agentId: agentData.id,
+          flow: 'bootstrap',
+        });
+        req._agentCreateApiKeyProvisioned = false;
+
+        await cleanupDbAgentRowIfCreated('config_apply_failed');
+
+        logger.warn('Cleaned up bootstrap credentials after config.apply failure', {
+          agentId: agentData.id,
+          configApplied,
+          error: configApplyError.message,
+        });
+        throw configApplyError;
+      }
 
       await ensureDocsLinkIfMissing(agentData.id);
 
@@ -2272,103 +2614,24 @@ router.post('/agents/config', requireAuth, requireAdmin, async (req, res, next) 
         });
       }
 
-      // Agent workspace bootstrap + credentials + workspace-local toolkit
-      const setupWarnings = [];
-
-      let agentApiKey = null;
-      try {
-        const rawKey = generateApiKey();
-        const keyHash = hashApiKey(rawKey);
-        const keyPrefix = rawKey.slice(0, 12);
-
-        await pool.query(
-          `INSERT INTO agent_api_keys (agent_id, key_hash, key_prefix, label, created_by_user_id)
-           VALUES ($1, $2, $3, $4, $5)`,
-          [agentData.id, keyHash, keyPrefix, 'bootstrap', req.user.id],
-        );
-
-        agentApiKey = rawKey;
-      } catch (apiKeyError) {
-        if (apiKeyError.code === '42P01') {
-          setupWarnings.push('agent_api_keys table not found; skipped API key bootstrap');
-        } else {
-          setupWarnings.push(`agent API key bootstrap failed: ${apiKeyError.message}`);
-        }
-        logger.warn('Failed to create bootstrap API key', {
-          agentId: agentData.id,
-          error: apiKeyError.message,
-          code: apiKeyError.code,
-        });
-      }
-
-      const safeAgentId = normalizeAgentIdForPath(agentData.id);
-      const workspaceRoot = safeAgentId === 'main' ? '/workspace' : `/workspace-${safeAgentId}`;
-      req._agentWorkspaceRoot = workspaceRoot;
-      req._agentCreateApiKeyProvisioned = Boolean(agentApiKey);
-
-      try {
-        await writeAgentToolkit(workspaceRoot);
-
-        if (agentApiKey) {
-          await upsertWorkspaceFile(
-            `${workspaceRoot}/mosbot.env`,
-            buildAgentMosbotEnv({ req, agentId: agentData.id, apiKey: agentApiKey }),
-          );
-        }
-
-        await upsertWorkspaceFile(
-          `${workspaceRoot}/BOOTSTRAP.md`,
-          buildAgentBootstrapContent(agentData),
-        );
-      } catch (workspaceError) {
-        setupWarnings.push(`workspace bootstrap failed: ${workspaceError.message}`);
-        logger.warn('Failed to write bootstrap files for new agent', {
-          agentId: agentData.id,
-          error: workspaceError.message,
-        });
-      }
-
+      // Workspace + bootstrap files were prepared before config.apply.
       // Trigger bootstrap execution immediately after agent creation so
       // first-run setup is deterministic from the MosBot flow.
-      if (!setupWarnings.some((w) => w.startsWith('workspace bootstrap failed:'))) {
-        let bootstrapTriggered = false;
-
-        try {
-          const bootstrapResult = await runBootstrapForNewAgent(agentData.id);
-          bootstrapTriggered = true;
-          logger.info('Triggered bootstrap run for new agent', {
-            agentId: agentData.id,
-            status: bootstrapResult?.status || 'ok',
-            runId: bootstrapResult?.runId || null,
-          });
-        } catch (bootstrapRunError) {
-          setupWarnings.push(`bootstrap execution trigger failed: ${bootstrapRunError.message}`);
-          logger.warn('Failed to trigger bootstrap run for new agent', {
-            agentId: agentData.id,
-            error: bootstrapRunError.message,
-            code: bootstrapRunError.code,
-          });
-        }
-
-        if (bootstrapTriggered) {
-          // Best-effort deterministic cleanup: if bootstrap artifacts are present but
-          // BOOTSTRAP.md remains, remove it from backend once required root files exist.
-          try {
-            const finalize = await maybeFinalizeBootstrapFile(workspaceRoot);
-            if (finalize.status === 'still_present') {
-              setupWarnings.push(
-                `bootstrap file still present after trigger (missing: ${(finalize.missingRequired || []).join(', ')})`,
-              );
-            }
-          } catch (bootstrapFinalizeError) {
-            setupWarnings.push(`bootstrap finalization failed: ${bootstrapFinalizeError.message}`);
-            logger.warn('Failed to finalize bootstrap file for new agent', {
-              agentId: agentData.id,
-              error: bootstrapFinalizeError.message,
-              code: bootstrapFinalizeError.code,
-            });
-          }
-        }
+      // NOTE: backend does NOT remove BOOTSTRAP.md; only the agent should remove it.
+      try {
+        const bootstrapResult = await runBootstrapForNewAgent(agentData.id);
+        logger.info('Triggered bootstrap run for new agent', {
+          agentId: agentData.id,
+          status: bootstrapResult?.status || 'ok',
+          runId: bootstrapResult?.runId || null,
+        });
+      } catch (bootstrapRunError) {
+        setupWarnings.push(`bootstrap execution trigger failed: ${bootstrapRunError.message}`);
+        logger.warn('Failed to trigger bootstrap run for new agent', {
+          agentId: agentData.id,
+          error: bootstrapRunError.message,
+          code: bootstrapRunError.code,
+        });
       }
 
       req._agentCreateWarnings = setupWarnings;
@@ -2413,7 +2676,11 @@ router.post('/agents/config', requireAuth, requireAdmin, async (req, res, next) 
 
 // POST /api/v1/openclaw/agents/config/:agentId/rebootstrap
 // Re-seed toolkit/bootstrap and trigger bootstrap execution for existing agent
-router.post('/agents/config/:agentId/rebootstrap', requireAuth, requireAdmin, async (req, res, next) => {
+router.post(
+  '/agents/config/:agentId/rebootstrap',
+  requireAuth,
+  requireManageUsers,
+  async (req, res, next) => {
   try {
     const agentId = req.params.agentId;
 
@@ -2423,11 +2690,32 @@ router.post('/agents/config/:agentId/rebootstrap', requireAuth, requireAdmin, as
       });
     }
 
+    if (!isValidAgentId(agentId)) {
+      return res.status(400).json({
+        error: {
+          message:
+            'agentId must be a valid slug (lowercase letters, numbers, hyphens, underscores)',
+          status: 400,
+          code: 'INVALID_AGENT_ID',
+        },
+      });
+    }
+
     const openclawData = await makeOpenClawRequest('GET', '/files/content?path=/openclaw.json');
     const openclawConfig = parseOpenClawConfig(openclawData.content);
     const agentsList = Array.isArray(openclawConfig?.agents?.list) ? openclawConfig.agents.list : [];
+    const agentsDefaults = openclawConfig?.agents?.defaults || {};
 
-    const runtimeAgent = agentsList.find((a) => a?.id === agentId);
+    let runtimeAgent = agentsList.find((a) => a?.id === agentId);
+    if (!runtimeAgent && agentId === 'main') {
+      runtimeAgent = {
+        id: 'main',
+        default: true,
+        workspace: agentsDefaults.workspace || '/workspace',
+        identity: agentsDefaults.identity || {},
+        model: agentsDefaults.model || {},
+      };
+    }
     if (!runtimeAgent) {
       return res.status(404).json({
         error: {
@@ -2440,19 +2728,63 @@ router.post('/agents/config/:agentId/rebootstrap', requireAuth, requireAdmin, as
 
     const dbStatus = 'active';
     const dbActive = true;
+    const runtimeIdentity = runtimeAgent?.identity || {};
+    const hasExplicitIdentityEmoji = Object.prototype.hasOwnProperty.call(runtimeIdentity, 'emoji');
 
     const agentData = {
       id: agentId,
-      displayName: runtimeAgent?.identity?.name || agentId,
-      title: runtimeAgent?.identity?.name || agentId,
-      description: runtimeAgent?.identity?.theme || '',
-      identityName: runtimeAgent?.identity?.name || agentId,
-      identityTheme: runtimeAgent?.identity?.theme || '',
-      identityEmoji: runtimeAgent?.identity?.emoji || '🤖',
+      displayName: runtimeIdentity?.name || agentId,
+      title: runtimeIdentity?.name || agentId,
+      description: runtimeIdentity?.theme || '',
+      identityName: runtimeIdentity?.name || agentId,
+      identityTheme: runtimeIdentity?.theme || '',
+      identityEmoji: hasExplicitIdentityEmoji ? runtimeIdentity?.emoji : undefined,
       modelPrimary: runtimeAgent?.model?.primary || null,
       modelFallback1: runtimeAgent?.model?.fallbacks?.[0] || null,
       modelFallback2: runtimeAgent?.model?.fallbacks?.[1] || null,
     };
+
+    const agentMeta = {
+      label: `agent:${agentData.id}:main`,
+      description: agentData.description || '',
+    };
+    if (hasExplicitIdentityEmoji) {
+      agentMeta.emoji = agentData.identityEmoji;
+    }
+
+    let workspaceRoot;
+    try {
+      workspaceRoot = normalizeRemapAndValidateWorkspacePath(resolveAgentWorkspacePath(runtimeAgent));
+    } catch (workspacePathError) {
+      return res.status(400).json({
+        error: {
+          message: `invalid workspace path for agent "${agentId}": ${workspacePathError.message}`,
+          status: 400,
+          code: 'INVALID_WORKSPACE_PATH',
+        },
+      });
+    }
+    if (!isAllowedAgentWorkspaceProvisionPath(workspaceRoot)) {
+      return res.status(400).json({
+        error: {
+          message: `invalid workspace path for agent "${agentId}": must be under /workspace or /workspace-<agent>`,
+          status: 400,
+          code: 'INVALID_WORKSPACE_PATH',
+        },
+      });
+    }
+    if (
+      agentId !== 'main' &&
+      (workspaceRoot === '/workspace' || workspaceRoot.startsWith('/workspace/'))
+    ) {
+      return res.status(400).json({
+        error: {
+          message: `invalid workspace path for agent "${agentId}": non-main agents must use an agent-specific workspace root`,
+          status: 400,
+          code: 'INVALID_WORKSPACE_PATH',
+        },
+      });
+    }
 
     // Ensure DB row exists (agent_api_keys FK depends on this).
     await pool.query(
@@ -2460,11 +2792,13 @@ router.post('/agents/config/:agentId/rebootstrap', requireAuth, requireAdmin, as
        VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7)
        ON CONFLICT (agent_id)
        DO UPDATE SET
-         name = EXCLUDED.name,
-         title = EXCLUDED.title,
-         status = EXCLUDED.status,
-         meta = COALESCE(agents.meta, '{}'::jsonb) || EXCLUDED.meta,
-         active = EXCLUDED.active,
+         -- Preserve curated DB values; only backfill missing runtime-derived fields.
+         name = COALESCE(NULLIF(agents.name, ''), EXCLUDED.name),
+         title = COALESCE(NULLIF(agents.title, ''), EXCLUDED.title),
+         status = COALESCE(NULLIF(agents.status, ''), EXCLUDED.status),
+         -- Merge with DB values winning on key collisions to avoid clobbering custom metadata.
+         meta = COALESCE(EXCLUDED.meta, '{}'::jsonb) || COALESCE(agents.meta, '{}'::jsonb),
+         active = COALESCE(agents.active, EXCLUDED.active),
          updated_at = NOW()`,
       [
         agentData.id,
@@ -2472,97 +2806,154 @@ router.post('/agents/config/:agentId/rebootstrap', requireAuth, requireAdmin, as
         agentData.title,
         dbStatus,
         null,
-        JSON.stringify({
-          label: `agent:${agentData.id}:main`,
-          description: agentData.description || '',
-          emoji: agentData.identityEmoji || null,
-        }),
+        JSON.stringify(agentMeta),
         dbActive,
       ],
     );
 
     const setupWarnings = [];
+    let updatedMosbotEnv = false;
+    let createdApiKeyId = null;
+    let rotatedFromKeyIds = [];
+    const mosbotEnvPath = `${workspaceRoot}/mosbot.env`;
 
-    let agentApiKey = null;
-    let createdAgentApiKeyId = null;
     try {
-      const rawKey = generateApiKey();
-      const keyHash = hashApiKey(rawKey);
-      const keyPrefix = rawKey.slice(0, 12);
+      await writeAgentToolkit(workspaceRoot);
+    } catch (workspaceError) {
+      return res.status(500).json({
+        error: {
+          message: `workspace re-bootstrap failed: ${workspaceError.message}`,
+          status: 500,
+          code: 'WORKSPACE_REBOOTSTRAP_FAILED',
+        },
+      });
+    }
 
-      const insertKeyResult = await pool.query(
-        `INSERT INTO agent_api_keys (agent_id, key_hash, key_prefix, label, created_by_user_id)
-         VALUES ($1, $2, $3, $4, $5)
-         RETURNING id`,
-        [agentData.id, keyHash, keyPrefix, 'rebootstrap', req.user.id],
-      );
+    try {
+      const apiKeyResult = await getOrCreateSingleAgentApiKey({
+        agentId: agentData.id,
+        createdByUserId: req.user.id,
+        label: 'rebootstrap',
+      });
 
-      agentApiKey = rawKey;
-      createdAgentApiKeyId = insertKeyResult.rows?.[0]?.id || null;
+      if (Array.isArray(apiKeyResult?.warnings) && apiKeyResult.warnings.length > 0) {
+        setupWarnings.push(...apiKeyResult.warnings);
+      }
+
+      if (apiKeyResult?.created && apiKeyResult?.apiKey) {
+        createdApiKeyId = apiKeyResult.keyId || null;
+        try {
+          await upsertWorkspaceFile(
+            mosbotEnvPath,
+            buildAgentMosbotEnv({ req, agentId: agentData.id, apiKey: apiKeyResult.apiKey }),
+          );
+          updatedMosbotEnv = true;
+        } catch (envWriteError) {
+          await cleanupProvisionedApiKeyArtifacts({
+            createdApiKeyId,
+            workspaceRoot,
+            envWasWritten: updatedMosbotEnv,
+            agentId: agentData.id,
+            flow: 're-bootstrap',
+          });
+          updatedMosbotEnv = false;
+
+          return res.status(500).json({
+            error: {
+              message: `workspace re-bootstrap failed: ${envWriteError.message}`,
+              status: 500,
+              code: 'WORKSPACE_REBOOTSTRAP_FAILED',
+            },
+          });
+        }
+      } else {
+        let envExists = false;
+        try {
+          envExists = await workspaceFileExists(mosbotEnvPath);
+        } catch (envCheckError) {
+          return res.status(500).json({
+            error: {
+              message: `workspace re-bootstrap failed: ${envCheckError.message}`,
+              status: 500,
+              code: 'WORKSPACE_REBOOTSTRAP_FAILED',
+            },
+          });
+        }
+
+        if (!envExists) {
+          setupWarnings.push('mosbot.env missing; rotated active API key to restore credentials');
+          const rotatedApiKeyResult = await rotateSingleAgentApiKey({
+            agentId: agentData.id,
+            createdByUserId: req.user.id,
+            label: 'rebootstrap-recovery',
+          });
+          if (
+            Array.isArray(rotatedApiKeyResult?.warnings) &&
+            rotatedApiKeyResult.warnings.length > 0
+          ) {
+            setupWarnings.push(...rotatedApiKeyResult.warnings);
+          }
+
+          createdApiKeyId = rotatedApiKeyResult.keyId || null;
+          rotatedFromKeyIds = Array.isArray(rotatedApiKeyResult?.previousActiveKeyIds)
+            ? rotatedApiKeyResult.previousActiveKeyIds
+            : [];
+          try {
+            await upsertWorkspaceFile(
+              mosbotEnvPath,
+              buildAgentMosbotEnv({
+                req,
+                agentId: agentData.id,
+                apiKey: rotatedApiKeyResult.apiKey,
+              }),
+            );
+            updatedMosbotEnv = true;
+          } catch (envWriteError) {
+            await cleanupProvisionedApiKeyArtifacts({
+              createdApiKeyId,
+              workspaceRoot,
+              envWasWritten: updatedMosbotEnv,
+              agentId: agentData.id,
+              flow: 're-bootstrap',
+            });
+            updatedMosbotEnv = false;
+            return res.status(500).json({
+              error: {
+                message: `workspace re-bootstrap failed: ${envWriteError.message}`,
+                status: 500,
+                code: 'WORKSPACE_REBOOTSTRAP_FAILED',
+              },
+            });
+          }
+        }
+      }
     } catch (apiKeyError) {
       if (apiKeyError.code === '42P01') {
         setupWarnings.push('agent_api_keys table not found; skipped API key bootstrap');
       } else {
         setupWarnings.push(`agent API key bootstrap failed: ${apiKeyError.message}`);
       }
-      logger.warn('Failed to create re-bootstrap API key', {
+      logger.warn('Failed to ensure re-bootstrap API key', {
         agentId: agentData.id,
         error: apiKeyError.message,
         code: apiKeyError.code,
       });
     }
 
-    const safeAgentId = normalizeAgentIdForPath(agentData.id);
-    const workspaceRoot = safeAgentId === 'main' ? '/workspace' : `/workspace-${safeAgentId}`;
-
     try {
-      await writeAgentToolkit(workspaceRoot);
-
-      if (agentApiKey) {
-        await upsertWorkspaceFile(
-          `${workspaceRoot}/mosbot.env`,
-          buildAgentMosbotEnv({ req, agentId: agentData.id, apiKey: agentApiKey }),
-        );
-      }
-
       await upsertWorkspaceFile(
         `${workspaceRoot}/BOOTSTRAP.md`,
-        buildAgentBootstrapContent(agentData),
+        buildAgentBootstrapContent({ ...agentData, flow: 're-bootstrap' }),
       );
-
-      if (createdAgentApiKeyId) {
-        try {
-          await pool.query(
-            `UPDATE agent_api_keys
-                SET revoked_at = NOW()
-              WHERE agent_id = $1
-                AND revoked_at IS NULL
-                AND id <> $2`,
-            [agentData.id, createdAgentApiKeyId],
-          );
-        } catch (revokeErr) {
-          setupWarnings.push(`failed to revoke older API keys: ${revokeErr.message}`);
-          logger.warn('Failed to revoke older API keys after re-bootstrap', {
-            agentId: agentData.id,
-            error: revokeErr.message,
-          });
-        }
-      }
     } catch (workspaceError) {
-      if (createdAgentApiKeyId) {
-        try {
-          await pool.query('UPDATE agent_api_keys SET revoked_at = NOW() WHERE id = $1', [
-            createdAgentApiKeyId,
-          ]);
-        } catch (cleanupErr) {
-          logger.warn('Failed to revoke newly-created API key after re-bootstrap failure', {
-            agentId: agentData.id,
-            apiKeyId: createdAgentApiKeyId,
-            error: cleanupErr.message,
-          });
-        }
-      }
-
+      await cleanupProvisionedApiKeyArtifacts({
+        createdApiKeyId,
+        workspaceRoot,
+        envWasWritten: updatedMosbotEnv,
+        agentId: agentData.id,
+        flow: 're-bootstrap',
+      });
+      updatedMosbotEnv = false;
       return res.status(500).json({
         error: {
           message: `workspace re-bootstrap failed: ${workspaceError.message}`,
@@ -2603,16 +2994,46 @@ router.post('/agents/config/:agentId/rebootstrap', requireAuth, requireAdmin, as
       });
     }
 
+    if (rotatedFromKeyIds.length > 0) {
+      try {
+        await revokeAgentApiKeysById(rotatedFromKeyIds);
+      } catch (revokeError) {
+        setupWarnings.push('failed to revoke previous API keys after rotation');
+        logger.warn('Failed to revoke previous API keys after re-bootstrap rotation', {
+          agentId: agentData.id,
+          keyIds: rotatedFromKeyIds,
+          error: revokeError.message,
+        });
+      }
+    }
+
+    const updatedFiles = [
+      `${workspaceRoot}/tools/*`,
+      `${workspaceRoot}/TOOLS.md`,
+      `${workspaceRoot}/BOOTSTRAP.md`,
+      ...(updatedMosbotEnv ? [`${workspaceRoot}/mosbot.env`] : []),
+    ];
+
+    recordActivityLogEventSafe({
+      event_type: 'agent_rebootstrapped',
+      source: 'agents',
+      title: `Agent re-bootstrapped: ${agentData.id}`,
+      description: `Agent re-bootstrap triggered for "${agentData.id}"`,
+      severity: 'info',
+      actor_user_id: req.user.id,
+      agent_id: agentData.id,
+      meta: {
+        workspaceRoot,
+        updatedFiles,
+        warnings: setupWarnings,
+      },
+    });
+
     res.json({
       data: {
         agentId: agentData.id,
         message: 'Agent re-bootstrap triggered',
-        updatedFiles: [
-          `${workspaceRoot}/tools/*`,
-          `${workspaceRoot}/TOOLS.md`,
-          `${workspaceRoot}/BOOTSTRAP.md`,
-          ...(agentApiKey ? [`${workspaceRoot}/mosbot.env`] : []),
-        ],
+        updatedFiles,
         warnings: setupWarnings,
       },
     });

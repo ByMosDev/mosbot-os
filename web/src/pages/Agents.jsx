@@ -11,7 +11,12 @@ import {
   ArrowPathIcon,
 } from '@heroicons/react/24/outline';
 import Header from '../components/Header';
-import { getActiveSubagentSessions, getAgentsConfig, syncAgentsFromOpenClaw } from '../api/client';
+import {
+  getActiveSubagentSessions,
+  getAgentsConfig,
+  rebootstrapAgent,
+  syncAgentsFromOpenClaw,
+} from '../api/client';
 import { useAuthStore } from '../stores/authStore';
 import AgentEditModal from '../components/AgentEditModal';
 import logger from '../utils/logger';
@@ -48,8 +53,11 @@ export default function Agents() {
   const [selectedAgentId, setSelectedAgentId] = useState(null);
   const [agentModalMode, setAgentModalMode] = useState('edit'); // 'edit' or 'create'
   const [isSyncingAgents, setIsSyncingAgents] = useState(false);
+  const [rebootstrappingByAgentId, setRebootstrappingByAgentId] = useState({});
+  const rebootstrappingRef = useRef(new Set());
   const pollingRef = useRef(null);
-  const { isAdmin } = useAuthStore();
+  const { user } = useAuthStore();
+  const canManageAgents = user?.role === 'admin' || user?.role === 'owner';
 
   // Fetch agents config
   const loadConfig = async () => {
@@ -141,7 +149,6 @@ export default function Agents() {
     try {
       await syncAgentsFromOpenClaw();
       await loadConfig();
-      setConfigError(null);
     } catch (err) {
       logger.error('Failed to reconcile agents from OpenClaw', err);
       setConfigError(err?.response?.data?.error?.message || err.message || 'Failed to sync agents');
@@ -154,6 +161,31 @@ export default function Agents() {
     setSelectedAgentId(agentId);
     setAgentModalMode('edit');
     setShowAgentModal(true);
+  };
+
+  const handleRebootstrapAgent = async (agentId) => {
+    if (!agentId) return;
+    if (rebootstrappingRef.current.has(agentId)) return;
+
+    rebootstrappingRef.current.add(agentId);
+    setRebootstrappingByAgentId((prev) => ({ ...prev, [agentId]: true }));
+    try {
+      await rebootstrapAgent(agentId);
+      await loadConfig();
+    } catch (err) {
+      logger.error('Failed to re-bootstrap agent', { agentId, error: err.message });
+      setConfigError(
+        err?.response?.data?.error?.message || err.message || `Failed to re-bootstrap ${agentId}`,
+      );
+    } finally {
+      rebootstrappingRef.current.delete(agentId);
+      setRebootstrappingByAgentId((prev) => {
+        if (!prev[agentId]) return prev;
+        const next = { ...prev };
+        delete next[agentId];
+        return next;
+      });
+    }
   };
 
   const handleAddAgent = () => {
@@ -234,7 +266,7 @@ export default function Agents() {
   const AgentCard = ({ leader, large = false }) => {
     const status = getNodeStatus(leader.label);
     const { border: borderColor, bg: bgColor } = getAgentColor(leader.id);
-    const canEdit = isAdmin();
+    const canEdit = canManageAgents;
 
     return (
       <div className={`relative ${large ? 'w-[400px]' : 'w-[300px]'} group`}>
@@ -255,7 +287,6 @@ export default function Agents() {
               ) : (
                 <div />
               )}
-
               <div className="flex items-center gap-2">
                 {leader.isDefault && (
                   <span className="px-2 py-0.5 bg-primary-600/20 text-primary-300 border border-primary-500/30 rounded text-[10px] font-semibold uppercase tracking-wide">
@@ -263,13 +294,34 @@ export default function Agents() {
                   </span>
                 )}
                 {canEdit && (
-                  <button
-                    onClick={() => handleEditAgent(leader.id)}
-                    className="opacity-0 group-hover:opacity-100 transition-opacity h-[21px] px-1.5 bg-dark-800/70 hover:bg-dark-700 rounded border border-dark-600 hover:border-dark-500 flex items-center justify-center"
-                    title="Edit agent"
-                  >
-                    <PencilIcon className="w-3 h-3 text-dark-300" />
-                  </button>
+                  <>
+                    <button
+                      onClick={() => handleRebootstrapAgent(leader.id)}
+                      disabled={Boolean(rebootstrappingByAgentId[leader.id])}
+                      aria-label={`Re-bootstrap ${leader.displayName || leader.label}`}
+                      aria-busy={Boolean(rebootstrappingByAgentId[leader.id])}
+                      className={`transition-opacity h-[21px] px-1.5 bg-dark-800/70 hover:bg-dark-700 rounded border border-dark-600 hover:border-dark-500 flex items-center justify-center disabled:opacity-50 ${
+                        rebootstrappingByAgentId[leader.id]
+                          ? 'opacity-100'
+                          : 'opacity-0 group-hover:opacity-100'
+                      }`}
+                      title="Re-bootstrap agent"
+                    >
+                      <ArrowPathIcon
+                        aria-hidden="true"
+                        className={`w-3 h-3 text-dark-300 ${
+                          rebootstrappingByAgentId[leader.id] ? 'animate-spin' : ''
+                        }`}
+                      />
+                    </button>
+                    <button
+                      onClick={() => handleEditAgent(leader.id)}
+                      className="opacity-0 group-hover:opacity-100 transition-opacity h-[21px] px-1.5 bg-dark-800/70 hover:bg-dark-700 rounded border border-dark-600 hover:border-dark-500 flex items-center justify-center"
+                      title="Edit agent"
+                    >
+                      <PencilIcon className="w-3 h-3 text-dark-300" />
+                    </button>
+                  </>
                 )}
                 <StatusBadge status={status} />
               </div>
@@ -447,7 +499,7 @@ export default function Agents() {
         subtitle="Your agent team and status overview"
         onRefresh={handleRefresh}
       >
-        {isAdmin() && (
+        {canManageAgents && (
           <div className="flex items-center gap-2">
             <button
               onClick={handleSyncAgents}
@@ -500,7 +552,7 @@ export default function Agents() {
                 <code className="text-dark-300">openclaw.json</code> and they will appear here
                 automatically. Custom hierarchy metadata is stored in the database.
               </p>
-              {isAdmin() && (
+              {canManageAgents && (
                 <button
                   onClick={handleAddAgent}
                   className="btn-primary inline-flex items-center gap-2"
@@ -519,7 +571,7 @@ export default function Agents() {
                 <StatusBadge status={getNodeStatus(leadership[0].label)} />
               </div>
               <AgentCard leader={leadership[0]} large={true} />
-              {isAdmin() && (
+              {canManageAgents && (
                 <button
                   onClick={handleAddAgent}
                   className="mt-8 btn-secondary inline-flex items-center gap-2 text-sm"
