@@ -1222,6 +1222,56 @@ describe('OpenClaw Routes', () => {
       expect(response.body.data.updatedFiles.some((f) => f.endsWith('/mosbot.env'))).toBe(false);
     });
 
+    it('should cleanup new DB agent row when toolkit bootstrap fails before config.apply', async () => {
+      const token = getToken('admin-id', 'admin');
+
+      global.fetch = jest.fn().mockImplementation(async (_url, options) => {
+        if (options?.method === 'GET') {
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({ content: JSON.stringify({ agents: { list: [] } }) }),
+            text: async () => 'OK',
+          };
+        }
+
+        if ((options?.method === 'PUT' || options?.method === 'POST') && options?.body) {
+          const body = JSON.parse(options.body);
+          if (String(body?.path || '').endsWith('/tools/mosbot-auth')) {
+            return {
+              ok: false,
+              status: 500,
+              text: async () => 'boom',
+            };
+          }
+        }
+
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ ok: true }),
+          text: async () => 'OK',
+        };
+      });
+
+      const response = await request(app)
+        .post('/api/v1/openclaw/agents/config')
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          id: 'new-agent',
+          displayName: 'New Agent',
+        });
+
+      expect(response.status).toBe(500);
+      expect(response.body.error.code).toBe('WORKSPACE_BOOTSTRAP_FAILED');
+
+      const agentDeleteCall = pool.query.mock.calls.find(([sql]) =>
+        String(sql).includes('DELETE FROM agents WHERE agent_id = $1'),
+      );
+      expect(agentDeleteCall).toBeDefined();
+      expect(agentDeleteCall[1]).toEqual(['new-agent']);
+    });
+
     it('should cleanup new api key/env when BOOTSTRAP write fails', async () => {
       const token = getToken('admin-id', 'admin');
 
@@ -1301,6 +1351,12 @@ describe('OpenClaw Routes', () => {
           String(url).includes('/files?path=%2Fworkspace-new-agent%2Fmosbot.env'),
       );
       expect(envDeleteCall).toBeDefined();
+
+      const agentDeleteCall = pool.query.mock.calls.find(([sql]) =>
+        String(sql).includes('DELETE FROM agents WHERE agent_id = $1'),
+      );
+      expect(agentDeleteCall).toBeDefined();
+      expect(agentDeleteCall[1]).toEqual(['new-agent']);
     });
 
     it('should deny agent role from creating', async () => {

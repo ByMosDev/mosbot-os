@@ -1688,6 +1688,19 @@ router.post('/agents/config', requireAuth, requireAdmin, async (req, res, next) 
       agentData.id,
     ]);
     const dbAgentExistedBeforeCreate = (existingAgentRow.rowCount || 0) > 0;
+    const cleanupDbAgentRowIfCreated = async (reason) => {
+      if (dbAgentExistedBeforeCreate) return;
+
+      try {
+        await pool.query('DELETE FROM agents WHERE agent_id = $1', [agentData.id]);
+      } catch (dbCleanupError) {
+        logger.warn('Failed to cleanup agent DB row after create bootstrap failure', {
+          agentId: agentData.id,
+          reason,
+          error: dbCleanupError.message,
+        });
+      }
+    };
 
     // Ensure DB agent row exists before API key bootstrap (FK on agent_api_keys.agent_id).
     await pool.query(
@@ -1731,6 +1744,7 @@ router.post('/agents/config', requireAuth, requireAdmin, async (req, res, next) 
     try {
       await writeAgentToolkit(workspaceRoot);
     } catch (workspaceError) {
+      await cleanupDbAgentRowIfCreated('toolkit_write_failed');
       logger.error('Workspace bootstrap failed before agent creation', {
         agentId: agentData.id,
         error: workspaceError.message,
@@ -1774,6 +1788,7 @@ router.post('/agents/config', requireAuth, requireAdmin, async (req, res, next) 
             agentId: agentData.id,
             flow: 'bootstrap',
           });
+          await cleanupDbAgentRowIfCreated('mosbot_env_write_failed');
           req._agentCreateApiKeyProvisioned = false;
 
           return res.status(500).json({
@@ -1811,6 +1826,7 @@ router.post('/agents/config', requireAuth, requireAdmin, async (req, res, next) 
         agentId: agentData.id,
         flow: 'bootstrap',
       });
+      await cleanupDbAgentRowIfCreated('bootstrap_file_write_failed');
       req._agentCreateApiKeyProvisioned = false;
       logger.error('Workspace bootstrap failed before agent creation', {
         agentId: agentData.id,
@@ -1890,16 +1906,7 @@ router.post('/agents/config', requireAuth, requireAdmin, async (req, res, next) 
         });
         req._agentCreateApiKeyProvisioned = false;
 
-        if (!dbAgentExistedBeforeCreate) {
-          try {
-            await pool.query('DELETE FROM agents WHERE agent_id = $1', [agentData.id]);
-          } catch (dbCleanupError) {
-            logger.warn('Failed to cleanup agent DB row after config.apply failure', {
-              agentId: agentData.id,
-              error: dbCleanupError.message,
-            });
-          }
-        }
+        await cleanupDbAgentRowIfCreated('config_apply_failed');
 
         logger.warn('Cleaned up bootstrap credentials after config.apply failure', {
           agentId: agentData.id,
@@ -2085,7 +2092,7 @@ router.post('/agents/config/:agentId/rebootstrap', requireAuth, requireAdmin, as
     if (!isAllowedAgentWorkspaceProvisionPath(workspaceRoot)) {
       return res.status(400).json({
         error: {
-          message: `invalid workspace path for agent "${agentId}": must resolve to /workspace or /workspace-<agent>`,
+          message: `invalid workspace path for agent "${agentId}": must be under /workspace or /workspace-<agent>`,
           status: 400,
           code: 'INVALID_WORKSPACE_PATH',
         },
