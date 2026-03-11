@@ -172,7 +172,11 @@ export const syncAgentsFromOpenClaw = async () => {
 };
 
 export const rebootstrapAgent = async (agentId) => {
-  const response = await api.post(`/openclaw/agents/config/${encodeURIComponent(agentId)}/rebootstrap`);
+  const response = await api.post(
+    `/openclaw/agents/config/${encodeURIComponent(agentId)}/rebootstrap`,
+    null,
+    { timeout: OPENCLAW_TIMEOUT },
+  );
   return response.data.data;
 };
 

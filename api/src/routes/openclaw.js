@@ -801,6 +801,12 @@ function isAllowedWorkspacePath(workspacePath) {
   return false;
 }
 
+function isAllowedAgentWorkspaceProvisionPath(workspacePath) {
+  if (workspacePath === '/workspace' || workspacePath.startsWith('/workspace/')) return true;
+  if (/^\/workspace-[a-z0-9_-]+(\/.*)?$/.test(workspacePath)) return true;
+  return false;
+}
+
 /**
  * Normalize a timestamp from OpenClaw to milliseconds.
  * OpenClaw may return: ms number, seconds number, or ISO string.
@@ -1678,6 +1684,10 @@ router.post('/agents/config', requireAuth, requireAdmin, async (req, res, next) 
 
     const dbStatus = 'active';
     const dbActive = true;
+    const existingAgentRow = await pool.query('SELECT 1 FROM agents WHERE agent_id = $1 LIMIT 1', [
+      agentData.id,
+    ]);
+    const dbAgentExistedBeforeCreate = (existingAgentRow.rowCount || 0) > 0;
 
     // Ensure DB agent row exists before API key bootstrap (FK on agent_api_keys.agent_id).
     await pool.query(
@@ -1860,13 +1870,44 @@ router.post('/agents/config', requireAuth, requireAdmin, async (req, res, next) 
       openclawConfig.agents.list.push(newAgent);
 
       const openclawContent = JSON.stringify(openclawConfig, null, 2) + '\n';
-      const currentConfig = await gatewayWsRpc('config.get', {});
-      await gatewayWsRpc('config.apply', {
-        raw: openclawContent,
-        baseHash: currentConfig?.hash || null,
-        note: `Agent created via MosBot (${agentData.id}) by ${req.user.id}`,
-        restartDelayMs: 2000,
-      });
+      let configApplied = false;
+      try {
+        const currentConfig = await gatewayWsRpc('config.get', {});
+        await gatewayWsRpc('config.apply', {
+          raw: openclawContent,
+          baseHash: currentConfig?.hash || null,
+          note: `Agent created via MosBot (${agentData.id}) by ${req.user.id}`,
+          restartDelayMs: 2000,
+        });
+        configApplied = true;
+      } catch (configApplyError) {
+        await cleanupProvisionedApiKeyArtifacts({
+          createdApiKeyId,
+          workspaceRoot,
+          envWasWritten: updatedMosbotEnv,
+          agentId: agentData.id,
+          flow: 'bootstrap',
+        });
+        req._agentCreateApiKeyProvisioned = false;
+
+        if (!dbAgentExistedBeforeCreate) {
+          try {
+            await pool.query('DELETE FROM agents WHERE agent_id = $1', [agentData.id]);
+          } catch (dbCleanupError) {
+            logger.warn('Failed to cleanup agent DB row after config.apply failure', {
+              agentId: agentData.id,
+              error: dbCleanupError.message,
+            });
+          }
+        }
+
+        logger.warn('Cleaned up bootstrap credentials after config.apply failure', {
+          agentId: agentData.id,
+          configApplied,
+          error: configApplyError.message,
+        });
+        throw configApplyError;
+      }
 
       await ensureDocsLinkIfMissing(agentData.id);
 
@@ -1888,22 +1929,20 @@ router.post('/agents/config', requireAuth, requireAdmin, async (req, res, next) 
       // Trigger bootstrap execution immediately after agent creation so
       // first-run setup is deterministic from the MosBot flow.
       // NOTE: backend does NOT remove BOOTSTRAP.md; only the agent should remove it.
-      if (!setupWarnings.some((w) => w.startsWith('workspace bootstrap failed:'))) {
-        try {
-          const bootstrapResult = await runBootstrapForNewAgent(agentData.id);
-          logger.info('Triggered bootstrap run for new agent', {
-            agentId: agentData.id,
-            status: bootstrapResult?.status || 'ok',
-            runId: bootstrapResult?.runId || null,
-          });
-        } catch (bootstrapRunError) {
-          setupWarnings.push(`bootstrap execution trigger failed: ${bootstrapRunError.message}`);
-          logger.warn('Failed to trigger bootstrap run for new agent', {
-            agentId: agentData.id,
-            error: bootstrapRunError.message,
-            code: bootstrapRunError.code,
-          });
-        }
+      try {
+        const bootstrapResult = await runBootstrapForNewAgent(agentData.id);
+        logger.info('Triggered bootstrap run for new agent', {
+          agentId: agentData.id,
+          status: bootstrapResult?.status || 'ok',
+          runId: bootstrapResult?.runId || null,
+        });
+      } catch (bootstrapRunError) {
+        setupWarnings.push(`bootstrap execution trigger failed: ${bootstrapRunError.message}`);
+        logger.warn('Failed to trigger bootstrap run for new agent', {
+          agentId: agentData.id,
+          error: bootstrapRunError.message,
+          code: bootstrapRunError.code,
+        });
       }
 
       req._agentCreateWarnings = setupWarnings;
@@ -2038,6 +2077,15 @@ router.post('/agents/config/:agentId/rebootstrap', requireAuth, requireAdmin, as
       return res.status(400).json({
         error: {
           message: `invalid workspace path for agent "${agentId}": ${workspacePathError.message}`,
+          status: 400,
+          code: 'INVALID_WORKSPACE_PATH',
+        },
+      });
+    }
+    if (!isAllowedAgentWorkspaceProvisionPath(workspaceRoot)) {
+      return res.status(400).json({
+        error: {
+          message: `invalid workspace path for agent "${agentId}": must resolve to /workspace or /workspace-<agent>`,
           status: 400,
           code: 'INVALID_WORKSPACE_PATH',
         },
