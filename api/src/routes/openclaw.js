@@ -7,7 +7,7 @@ const config = require('../config');
 const logger = require('../utils/logger');
 const path = require('path');
 const pool = require('../db/pool');
-const { requireAdmin } = require('./auth');
+const { requireAdmin, requireManageUsers } = require('./auth');
 const { makeOpenClawRequest } = require('../services/openclawWorkspaceClient');
 const { estimateCostFromTokens } = require('../services/modelPricingService');
 const { recordActivityLogEventSafe } = require('../services/activityLogService');
@@ -77,7 +77,7 @@ async function getOrCreateSingleAgentApiKey({ agentId, createdByUserId, label })
     `SELECT id
      FROM agent_api_keys
      WHERE agent_id = $1 AND revoked_at IS NULL
-     ORDER BY created_at DESC`,
+     ORDER BY created_at DESC, id DESC`,
     [agentId],
   );
 
@@ -126,7 +126,7 @@ async function getOrCreateSingleAgentApiKey({ agentId, createdByUserId, label })
         `SELECT id
          FROM agent_api_keys
          WHERE agent_id = $1 AND revoked_at IS NULL
-         ORDER BY created_at DESC
+         ORDER BY created_at DESC, id DESC
          LIMIT 1`,
         [agentId],
       );
@@ -212,47 +212,63 @@ async function workspaceFileExists(path) {
 }
 
 async function rotateSingleAgentApiKey({ agentId, createdByUserId, label }) {
-  const activeKeys = await pool.query(
-    `SELECT id
-     FROM agent_api_keys
-     WHERE agent_id = $1 AND revoked_at IS NULL
-     ORDER BY created_at DESC`,
-    [agentId],
-  );
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
 
-  const activeRows = activeKeys.rows || [];
-  const warnings = [];
+    const activeKeys = await client.query(
+      `SELECT id
+       FROM agent_api_keys
+       WHERE agent_id = $1 AND revoked_at IS NULL
+       ORDER BY created_at DESC, id DESC`,
+      [agentId],
+    );
 
-  if (activeRows.length > 0) {
-    const activeIds = activeRows.map((row) => row.id).filter(Boolean);
-    if (activeIds.length > 0) {
-      await pool.query(
-        `UPDATE agent_api_keys
-         SET revoked_at = NOW()
-         WHERE id = ANY($1::uuid[])`,
-        [activeIds],
-      );
-      warnings.push('rotated active API key to restore missing mosbot.env credentials');
+    const activeRows = activeKeys.rows || [];
+    const warnings = [];
+
+    if (activeRows.length > 0) {
+      const activeIds = activeRows.map((row) => row.id).filter(Boolean);
+      if (activeIds.length > 0) {
+        await client.query(
+          `UPDATE agent_api_keys
+           SET revoked_at = NOW()
+           WHERE id = ANY($1::uuid[])`,
+          [activeIds],
+        );
+        warnings.push('rotated active API key to restore missing mosbot.env credentials');
+      }
     }
+
+    const rawKey = generateApiKey();
+    const keyHash = hashApiKey(rawKey);
+    const keyPrefix = rawKey.slice(0, 12);
+
+    const insertResult = await client.query(
+      `INSERT INTO agent_api_keys (agent_id, key_hash, key_prefix, label, created_by_user_id)
+       VALUES ($1, $2, $3, $4, $5)
+       RETURNING id`,
+      [agentId, keyHash, keyPrefix, label, createdByUserId],
+    );
+
+    await client.query('COMMIT');
+
+    return {
+      created: true,
+      keyId: insertResult.rows?.[0]?.id || null,
+      apiKey: rawKey,
+      warnings,
+    };
+  } catch (error) {
+    try {
+      await client.query('ROLLBACK');
+    } catch (rollbackError) {
+      logger.error('Failed to rollback agent API key rotation transaction', rollbackError);
+    }
+    throw error;
+  } finally {
+    client.release();
   }
-
-  const rawKey = generateApiKey();
-  const keyHash = hashApiKey(rawKey);
-  const keyPrefix = rawKey.slice(0, 12);
-
-  const insertResult = await pool.query(
-    `INSERT INTO agent_api_keys (agent_id, key_hash, key_prefix, label, created_by_user_id)
-     VALUES ($1, $2, $3, $4, $5)
-     RETURNING id`,
-    [agentId, keyHash, keyPrefix, label, createdByUserId],
-  );
-
-  return {
-    created: true,
-    keyId: insertResult.rows?.[0]?.id || null,
-    apiKey: rawKey,
-    warnings,
-  };
 }
 
 function getMosbotApiBaseUrl(_req) {
@@ -2058,7 +2074,11 @@ router.post('/agents/config', requireAuth, requireAdmin, async (req, res, next) 
 
 // POST /api/v1/openclaw/agents/config/:agentId/rebootstrap
 // Re-seed toolkit/bootstrap and trigger bootstrap execution for existing agent
-router.post('/agents/config/:agentId/rebootstrap', requireAuth, requireAdmin, async (req, res, next) => {
+router.post(
+  '/agents/config/:agentId/rebootstrap',
+  requireAuth,
+  requireManageUsers,
+  async (req, res, next) => {
   try {
     const agentId = req.params.agentId;
 
@@ -2075,16 +2095,6 @@ router.post('/agents/config/:agentId/rebootstrap', requireAuth, requireAdmin, as
             'agentId must be a valid slug (lowercase letters, numbers, hyphens, underscores)',
           status: 400,
           code: 'INVALID_AGENT_ID',
-        },
-      });
-    }
-
-    if (req.user.role === 'agent') {
-      return res.status(403).json({
-        error: {
-          message: 'Re-bootstrap requires admin or owner role (agent lifecycle management access)',
-          status: 403,
-          code: 'INSUFFICIENT_PERMISSIONS',
         },
       });
     }
