@@ -1,4 +1,8 @@
+-- Legacy compatibility migration:
 -- Convert agent_project_assignments to support multi-project assignment per agent
+-- when upgrading from early schemas that used PRIMARY KEY (agent_id).
+-- On fresh installs where migration 016 already created the composite PK/indexes,
+-- this migration is intentionally a no-op.
 
 DO $$
 BEGIN
@@ -19,9 +23,8 @@ BEGIN
       ALTER TABLE agent_project_assignments DROP CONSTRAINT agent_project_assignments_pkey;
       ALTER TABLE agent_project_assignments
         ADD CONSTRAINT agent_project_assignments_pkey PRIMARY KEY (agent_id, project_id);
+      CREATE INDEX IF NOT EXISTS idx_agent_project_assignments_agent_id
+        ON agent_project_assignments(agent_id);
     END IF;
   END IF;
 END $$;
-
-CREATE INDEX IF NOT EXISTS idx_agent_project_assignments_agent_id
-  ON agent_project_assignments(agent_id);

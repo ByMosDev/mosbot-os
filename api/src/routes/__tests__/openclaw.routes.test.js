@@ -1731,6 +1731,43 @@ describe('OpenClaw Routes', () => {
       expect(response.body.error.code).toBe('PROJECT_EXISTS');
     });
 
+    it('rejects project creation when name is only whitespace', async () => {
+      const token = getToken('admin-id', 'admin');
+
+      const response = await request(app)
+        .post('/api/v1/openclaw/projects')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ name: '   ', slug: 'alpha' });
+
+      expect(response.status).toBe(400);
+      expect(response.body.error.code).toBe('PROJECT_NAME_REQUIRED');
+    });
+
+    it('rejects project update when name is only whitespace', async () => {
+      const token = getToken('admin-id', 'admin');
+      pool.query.mockResolvedValueOnce({
+        rows: [
+          {
+            id: 'project-1',
+            slug: 'alpha',
+            name: 'Alpha',
+            description: '',
+            root_path: '/projects/alpha',
+            contract_path: '/projects/alpha/agent-contract.md',
+            status: 'active',
+          },
+        ],
+      });
+
+      const response = await request(app)
+        .put('/api/v1/openclaw/projects/project-1')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ name: '   ' });
+
+      expect(response.status).toBe(400);
+      expect(response.body.error.code).toBe('PROJECT_NAME_REQUIRED');
+    });
+
     it('reconciles links when project rootPath changes', async () => {
       const token = getToken('admin-id', 'admin');
       pool.query

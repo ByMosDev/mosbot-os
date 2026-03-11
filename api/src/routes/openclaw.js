@@ -562,6 +562,7 @@ async function getAssignedProjectsForAgent(agentId) {
        FROM agent_project_assignments apa
        JOIN projects p ON p.id = apa.project_id
       WHERE apa.agent_id = $1
+        AND p.status = 'active'
       ORDER BY p.slug ASC`,
     [agentId],
   );
@@ -1206,6 +1207,11 @@ router.post('/projects', requireAuth, requireAdmin, async (req, res, next) => {
     }
 
     const name = String(body.name || slug).trim();
+    if (!name) {
+      return res.status(400).json({
+        error: { message: 'name must not be empty', status: 400, code: 'PROJECT_NAME_REQUIRED' },
+      });
+    }
     const rootPath = normalizeProjectRootPath(body.rootPath, slug);
     const contractPath = body.contractPath
       ? normalizeAndValidateWorkspacePath(body.contractPath)
@@ -1269,6 +1275,11 @@ router.put('/projects/:projectId', requireAuth, requireAdmin, async (req, res, n
 
     const slug = body.slug ? normalizeProjectSlug(body.slug) : current.slug;
     const name = body.name ? String(body.name).trim() : current.name;
+    if (body.name !== undefined && !name) {
+      return res.status(400).json({
+        error: { message: 'name must not be empty', status: 400, code: 'PROJECT_NAME_REQUIRED' },
+      });
+    }
     const rootPath = normalizeProjectRootPath(body.rootPath || current.root_path, slug);
     const contractPath = body.contractPath
       ? normalizeAndValidateWorkspacePath(body.contractPath)
