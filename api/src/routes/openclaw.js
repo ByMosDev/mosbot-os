@@ -641,6 +641,33 @@ function buildImplicitMainLeadership(overrides = {}) {
   };
 }
 
+let lastAgentReconcileAtMs = 0;
+let agentReconcileInFlight = null;
+
+async function reconcileAgentsIfStale({ trigger = 'read', minIntervalMs = 60_000 } = {}) {
+  const now = Date.now();
+  if (now - lastAgentReconcileAtMs < minIntervalMs) {
+    return;
+  }
+
+  if (agentReconcileInFlight) {
+    await agentReconcileInFlight;
+    return;
+  }
+
+  agentReconcileInFlight = (async () => {
+    try {
+      const { reconcileAgentsFromOpenClaw } = require('../services/agentReconciliationService');
+      await reconcileAgentsFromOpenClaw({ trigger });
+    } finally {
+      lastAgentReconcileAtMs = Date.now();
+      agentReconcileInFlight = null;
+    }
+  })();
+
+  await agentReconcileInFlight;
+}
+
 /**
  * Validate that a workspace path is allowed for access
  * @param {string} workspacePath - Normalized workspace path
@@ -1088,6 +1115,16 @@ router.get('/agents', requireAuth, async (req, res, next) => {
       userId: req.user.id,
     });
 
+    // Keep DB registry close to runtime config even when config is changed outside MosBot.
+    try {
+      await reconcileAgentsIfStale({ trigger: 'agents_read' });
+    } catch (reconcileErr) {
+      logger.warn('Agent reconcile on /agents failed (non-fatal)', {
+        userId: req.user.id,
+        error: reconcileErr.message,
+      });
+    }
+
     // Read the OpenClaw config file directly from the workspace service
     // This reads from the running OpenClaw instance at /openclaw.json
     // (copy of config in the workspace directory)
@@ -1136,21 +1173,31 @@ router.get('/agents', requireAuth, async (req, res, next) => {
       }
 
       // Enrich agent names from users table (users.name is the canonical display name)
+      // and enrich icon/emoji from DB metadata when present.
       try {
         const pool = require('../db/pool');
         const agentIds = agents.map((a) => a.id);
-        const result = await pool.query(
-          'SELECT agent_id, name FROM users WHERE agent_id = ANY($1)',
-          [agentIds],
-        );
-        const userNameMap = new Map(result.rows.map((r) => [r.agent_id, r.name]));
+        const [userResult, metaResult] = await Promise.all([
+          pool.query('SELECT agent_id, name FROM users WHERE agent_id = ANY($1)', [agentIds]),
+          pool.query("SELECT agent_id, meta->>'emoji' AS emoji FROM agents WHERE agent_id = ANY($1)", [
+            agentIds,
+          ]),
+        ]);
+
+        const userNameMap = new Map(userResult.rows.map((r) => [r.agent_id, r.name]));
+        const emojiMap = new Map(metaResult.rows.map((r) => [r.agent_id, r.emoji]).filter(([, v]) => v));
+
         agents = agents.map((agent) => {
           const userName = userNameMap.get(agent.id);
-          if (!userName) return agent;
-          return { ...agent, name: userName, label: userName };
+          const emoji = emojiMap.get(agent.id);
+          return {
+            ...agent,
+            ...(userName ? { name: userName, label: userName } : {}),
+            ...(emoji ? { icon: emoji } : {}),
+          };
         });
       } catch (dbErr) {
-        logger.warn('Could not enrich agents with user names from DB', {
+        logger.warn('Could not enrich agents with DB metadata', {
           error: dbErr.message,
         });
       }
@@ -1183,8 +1230,16 @@ router.get('/agents/config', requireAuth, async (req, res, next) => {
   try {
     logger.info('Fetching agents configuration', { userId: req.user.id });
 
-    // Reconcile runs on startup + interval + explicit /admin/agents/sync.
-    // Keep this read path lightweight (avoid reconcile-on-read latency amplification).
+    // Reconcile on read (throttled) to keep DB and runtime config aligned when
+    // config changes happen outside MosBot (e.g., OpenClaw UI/CLI edits).
+    try {
+      await reconcileAgentsIfStale({ trigger: 'agents_config_read' });
+    } catch (reconcileErr) {
+      logger.warn('Agent reconcile on /agents/config failed (non-fatal)', {
+        userId: req.user.id,
+        error: reconcileErr.message,
+      });
+    }
 
     let openclawConfig = {};
     try {
