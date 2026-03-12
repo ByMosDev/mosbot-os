@@ -75,9 +75,14 @@ function generateApiKey() {
 }
 
 const AGENT_ID_REGEX = /^[a-z0-9_-]+$/;
+const PROJECT_ID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function isValidAgentId(agentId) {
   return typeof agentId === 'string' && AGENT_ID_REGEX.test(agentId);
+}
+
+function isValidProjectId(projectId) {
+  return typeof projectId === 'string' && PROJECT_ID_REGEX.test(projectId);
 }
 
 async function getOrCreateSingleAgentApiKey({ agentId, createdByUserId, label }) {
@@ -1457,6 +1462,12 @@ router.put('/projects/:projectId', requireAuth, requireAdmin, async (req, res, n
     const { projectId } = req.params;
     const body = req.body || {};
 
+    if (!isValidProjectId(projectId)) {
+      return res.status(400).json({
+        error: { message: 'Invalid projectId format', status: 400, code: 'INVALID_PROJECT_ID' },
+      });
+    }
+
     const currentResult = await pool.query('SELECT * FROM projects WHERE id = $1', [projectId]);
     const current = currentResult.rows[0];
     if (!current) {
@@ -1604,6 +1615,12 @@ router.delete('/projects/:projectId', requireAuth, requireAdmin, async (req, res
   try {
     const { projectId } = req.params;
 
+    if (!isValidProjectId(projectId)) {
+      return res.status(400).json({
+        error: { message: 'Invalid projectId format', status: 400, code: 'INVALID_PROJECT_ID' },
+      });
+    }
+
     const projectResult = await pool.query(
       'SELECT id, slug, root_path FROM projects WHERE id = $1',
       [projectId],
@@ -1659,6 +1676,12 @@ router.post('/projects/:projectId/assign-agent', requireAuth, requireAdmin, asyn
   try {
     const { projectId } = req.params;
     const { agentId, role } = req.body || {};
+
+    if (!isValidProjectId(projectId)) {
+      return res.status(400).json({
+        error: { message: 'Invalid projectId format', status: 400, code: 'INVALID_PROJECT_ID' },
+      });
+    }
 
     if (!agentId) {
       return res.status(400).json({
@@ -1754,12 +1777,17 @@ router.post('/projects/:projectId/assign-agent', requireAuth, requireAdmin, asyn
         });
       }
 
-      return res.status(500).json({
+      const status =
+        linkErr && typeof linkErr.status === 'number' && linkErr.status >= 400 && linkErr.status <= 599
+          ? linkErr.status
+          : 500;
+
+      return res.status(status).json({
         error: {
           message: cleanupFailed
             ? `Failed to assign agent to project due to link setup failure, and cleanup also failed: ${linkErr.message}`
             : `Failed to assign agent to project due to link setup failure: ${linkErr.message}`,
-          status: 500,
+          status,
           code: 'PROJECT_LINK_FAILED',
         },
       });
@@ -1793,6 +1821,12 @@ router.delete(
     try {
       const { projectId, agentId } = req.params;
       const normalizedAgentId = String(agentId || '').trim();
+
+      if (!isValidProjectId(projectId)) {
+        return res.status(400).json({
+          error: { message: 'Invalid projectId format', status: 400, code: 'INVALID_PROJECT_ID' },
+        });
+      }
       if (!normalizedAgentId) {
         return res.status(400).json({
           error: { message: 'agentId is required', status: 400, code: 'AGENT_ID_REQUIRED' },

@@ -2511,7 +2511,7 @@ describe('OpenClaw Routes', () => {
       pool.query.mockResolvedValueOnce({
         rows: [
           {
-            id: 'project-1',
+            id: '11111111-1111-1111-1111-111111111111',
             slug: 'alpha',
             name: 'Alpha',
             description: '',
@@ -2564,7 +2564,7 @@ describe('OpenClaw Routes', () => {
       pool.query.mockResolvedValueOnce({
         rows: [
           {
-            id: 'project-1',
+            id: '11111111-1111-1111-1111-111111111111',
             slug: 'alpha',
             name: 'Alpha',
             description: '',
@@ -2576,7 +2576,7 @@ describe('OpenClaw Routes', () => {
       });
 
       const response = await request(app)
-        .put('/api/v1/openclaw/projects/project-1')
+        .put('/api/v1/openclaw/projects/11111111-1111-1111-1111-111111111111')
         .set('Authorization', `Bearer ${token}`)
         .send({ name: '   ' });
 
@@ -2606,7 +2606,7 @@ describe('OpenClaw Routes', () => {
       pool.query.mockResolvedValueOnce({
         rows: [
           {
-            id: 'project-1',
+            id: '11111111-1111-1111-1111-111111111111',
             slug: 'alpha',
             name: 'Alpha',
             description: '',
@@ -2618,7 +2618,7 @@ describe('OpenClaw Routes', () => {
       });
 
       const response = await request(app)
-        .put('/api/v1/openclaw/projects/project-1')
+        .put('/api/v1/openclaw/projects/11111111-1111-1111-1111-111111111111')
         .set('Authorization', `Bearer ${token}`)
         .send({ contractPath: '/docs/agent-contract.md' });
 
@@ -2635,7 +2635,7 @@ describe('OpenClaw Routes', () => {
       pool.query.mockResolvedValueOnce({
         rows: [
           {
-            id: 'project-1',
+            id: '11111111-1111-1111-1111-111111111111',
             slug: 'alpha',
             name: 'Alpha',
             description: '',
@@ -2661,7 +2661,7 @@ describe('OpenClaw Routes', () => {
         .mockResolvedValueOnce({
           rows: [
             {
-              id: 'project-1',
+              id: '11111111-1111-1111-1111-111111111111',
               slug: 'alpha',
               name: 'Alpha',
               description: '',
@@ -2674,7 +2674,7 @@ describe('OpenClaw Routes', () => {
         .mockResolvedValueOnce({
           rows: [
             {
-              id: 'project-1',
+              id: '11111111-1111-1111-1111-111111111111',
               slug: 'alpha',
               name: 'Alpha',
               description: '',
@@ -2696,14 +2696,14 @@ describe('OpenClaw Routes', () => {
       });
 
       const response = await request(app)
-        .put('/api/v1/openclaw/projects/project-1')
+        .put('/api/v1/openclaw/projects/11111111-1111-1111-1111-111111111111')
         .set('Authorization', `Bearer ${token}`)
         .send({ slug: 'alpha-new', rootPath: '/projects/alpha-new' });
 
       expect(response.status).toBe(200);
       expect(pool.query).toHaveBeenCalledWith(
         'SELECT agent_id FROM agent_project_assignments WHERE project_id = $1',
-        ['project-1'],
+        ['11111111-1111-1111-1111-111111111111'],
       );
 
       const calledUrls = (global.fetch.mock.calls || []).map((call) => String(call[0]));
@@ -2736,7 +2736,7 @@ describe('OpenClaw Routes', () => {
         .mockResolvedValueOnce({
           rows: [
             {
-              id: 'project-1',
+              id: '11111111-1111-1111-1111-111111111111',
               slug: 'alpha',
               name: 'Alpha',
               description: '',
@@ -2749,7 +2749,7 @@ describe('OpenClaw Routes', () => {
         .mockResolvedValueOnce({
           rows: [
             {
-              id: 'project-1',
+              id: '11111111-1111-1111-1111-111111111111',
               slug: 'alpha',
               name: 'Alpha',
               description: '',
@@ -2771,14 +2771,14 @@ describe('OpenClaw Routes', () => {
       });
 
       const response = await request(app)
-        .put('/api/v1/openclaw/projects/project-1')
+        .put('/api/v1/openclaw/projects/11111111-1111-1111-1111-111111111111')
         .set('Authorization', `Bearer ${token}`)
         .send({ status: 'archived' });
 
       expect(response.status).toBe(200);
       expect(pool.query).toHaveBeenCalledWith(
         'SELECT agent_id FROM agent_project_assignments WHERE project_id = $1',
-        ['project-1'],
+        ['11111111-1111-1111-1111-111111111111'],
       );
 
       const calledUrls = (global.fetch.mock.calls || []).map((call) => String(call[0]));
@@ -2804,7 +2804,7 @@ describe('OpenClaw Routes', () => {
         .mockResolvedValueOnce({
           rows: [
             {
-              id: 'project-1',
+              id: '11111111-1111-1111-1111-111111111111',
               slug: 'alpha',
               name: 'Alpha',
               description: '',
@@ -2817,7 +2817,7 @@ describe('OpenClaw Routes', () => {
         .mockResolvedValueOnce({
           rows: [
             {
-              id: 'project-1',
+              id: '11111111-1111-1111-1111-111111111111',
               slug: 'alpha',
               name: 'Alpha (Updated)',
               description: '',
@@ -2836,7 +2836,7 @@ describe('OpenClaw Routes', () => {
       });
 
       const response = await request(app)
-        .put('/api/v1/openclaw/projects/project-1')
+        .put('/api/v1/openclaw/projects/11111111-1111-1111-1111-111111111111')
         .set('Authorization', `Bearer ${token}`)
         .send({ name: 'Alpha (Updated)' });
 
@@ -2860,6 +2860,56 @@ describe('OpenClaw Routes', () => {
       expect(response.body.error.message).toContain('Project rootPath');
     });
 
+    it('rejects project update when projectId is not a UUID', async () => {
+      const token = getToken('admin-id', 'admin');
+
+      const response = await request(app)
+        .put('/api/v1/openclaw/projects/not-a-uuid')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ name: 'Alpha' });
+
+      expect(response.status).toBe(400);
+      expect(response.body.error.code).toBe('INVALID_PROJECT_ID');
+      expect(pool.query).not.toHaveBeenCalled();
+    });
+
+    it('rejects project delete when projectId is not a UUID', async () => {
+      const token = getToken('admin-id', 'admin');
+
+      const response = await request(app)
+        .delete('/api/v1/openclaw/projects/not-a-uuid')
+        .set('Authorization', `Bearer ${token}`);
+
+      expect(response.status).toBe(400);
+      expect(response.body.error.code).toBe('INVALID_PROJECT_ID');
+      expect(pool.query).not.toHaveBeenCalled();
+    });
+
+    it('rejects project assignment when projectId is not a UUID', async () => {
+      const token = getToken('admin-id', 'admin');
+
+      const response = await request(app)
+        .post('/api/v1/openclaw/projects/not-a-uuid/assign-agent')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ agentId: 'cto' });
+
+      expect(response.status).toBe(400);
+      expect(response.body.error.code).toBe('INVALID_PROJECT_ID');
+      expect(pool.query).not.toHaveBeenCalled();
+    });
+
+    it('rejects project unassign when projectId is not a UUID', async () => {
+      const token = getToken('admin-id', 'admin');
+
+      const response = await request(app)
+        .delete('/api/v1/openclaw/projects/not-a-uuid/assign-agent/cto')
+        .set('Authorization', `Bearer ${token}`);
+
+      expect(response.status).toBe(400);
+      expect(response.body.error.code).toBe('INVALID_PROJECT_ID');
+      expect(pool.query).not.toHaveBeenCalled();
+    });
+
     it('rejects project rootPath when it contains extra segments', async () => {
       const token = getToken('admin-id', 'admin');
 
@@ -2881,7 +2931,7 @@ describe('OpenClaw Routes', () => {
         .mockResolvedValueOnce({
           rows: [
             {
-              id: 'project-1',
+              id: '11111111-1111-1111-1111-111111111111',
               slug: 'alpha',
               name: 'Alpha',
               root_path: '/projects/alpha',
@@ -2896,7 +2946,7 @@ describe('OpenClaw Routes', () => {
       pool.connect.mockResolvedValueOnce({ query: clientQuery, release });
 
       const response = await request(app)
-        .post('/api/v1/openclaw/projects/project-1/assign-agent')
+        .post('/api/v1/openclaw/projects/11111111-1111-1111-1111-111111111111/assign-agent')
         .set('Authorization', `Bearer ${token}`)
         .send({ agentId: 'cto' });
 
@@ -2906,7 +2956,7 @@ describe('OpenClaw Routes', () => {
       expect(clientQuery).toHaveBeenCalledWith('COMMIT');
       expect(clientQuery).toHaveBeenCalledWith(
         expect.stringContaining('INSERT INTO agent_project_assignments'),
-        ['cto', 'project-1', 'contributor', 'admin-id'],
+        ['cto', '11111111-1111-1111-1111-111111111111', 'contributor', 'admin-id'],
       );
       expect(ensureProjectLinkIfMissing).toHaveBeenCalledWith('main', '/projects/alpha');
       expect(release).toHaveBeenCalled();
@@ -2926,7 +2976,7 @@ describe('OpenClaw Routes', () => {
         .mockResolvedValueOnce({
           rows: [
             {
-              id: 'project-1',
+              id: '11111111-1111-1111-1111-111111111111',
               slug: 'alpha',
               name: 'Alpha',
               root_path: '/projects/alpha',
@@ -2937,7 +2987,7 @@ describe('OpenClaw Routes', () => {
         });
 
       const response = await request(app)
-        .post('/api/v1/openclaw/projects/project-1/assign-agent')
+        .post('/api/v1/openclaw/projects/11111111-1111-1111-1111-111111111111/assign-agent')
         .set('Authorization', `Bearer ${token}`)
         .send({ agentId: 'cto' });
 
@@ -2955,7 +3005,7 @@ describe('OpenClaw Routes', () => {
         .mockResolvedValueOnce({
           rows: [
             {
-              id: 'project-1',
+              id: '11111111-1111-1111-1111-111111111111',
               slug: 'alpha',
               name: 'Alpha',
               root_path: '/projects/alpha',
@@ -2976,7 +3026,7 @@ describe('OpenClaw Routes', () => {
       });
 
       const response = await request(app)
-        .post('/api/v1/openclaw/projects/project-1/assign-agent')
+        .post('/api/v1/openclaw/projects/11111111-1111-1111-1111-111111111111/assign-agent')
         .set('Authorization', `Bearer ${token}`)
         .send({ agentId: 'cto' });
 
@@ -2986,7 +3036,49 @@ describe('OpenClaw Routes', () => {
       expect(clientQuery).not.toHaveBeenCalledWith('ROLLBACK');
       expect(pool.query).toHaveBeenCalledWith(
         expect.stringContaining('DELETE FROM agent_project_assignments'),
-        ['cto', 'project-1'],
+        ['cto', '11111111-1111-1111-1111-111111111111'],
+      );
+    });
+
+    it('propagates workspace link status when project link ensure fails after commit', async () => {
+      const token = getToken('admin-id', 'admin');
+      pool.query
+        .mockResolvedValueOnce({
+          rows: [{ agent_id: 'cto' }],
+        })
+        .mockResolvedValueOnce({
+          rows: [
+            {
+              id: '11111111-1111-1111-1111-111111111111',
+              slug: 'alpha',
+              name: 'Alpha',
+              root_path: '/projects/alpha',
+              contract_path: '/projects/alpha/agent-contract.md',
+              status: 'active',
+            },
+          ],
+        });
+
+      const clientQuery = jest.fn().mockResolvedValue({ rows: [] });
+      const release = jest.fn();
+      pool.connect.mockResolvedValueOnce({ query: clientQuery, release });
+
+      const linkErr = new Error('workspace conflict');
+      linkErr.status = 409;
+      global.fetch = jest.fn().mockRejectedValueOnce(linkErr);
+
+      const response = await request(app)
+        .post('/api/v1/openclaw/projects/11111111-1111-1111-1111-111111111111/assign-agent')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ agentId: 'cto' });
+
+      expect(response.status).toBe(409);
+      expect(response.body.error.status).toBe(409);
+      expect(response.body.error.code).toBe('PROJECT_LINK_FAILED');
+      expect(clientQuery).toHaveBeenCalledWith('COMMIT');
+      expect(pool.query).toHaveBeenCalledWith(
+        expect.stringContaining('DELETE FROM agent_project_assignments'),
+        ['cto', '11111111-1111-1111-1111-111111111111'],
       );
     });
 
@@ -2994,7 +3086,7 @@ describe('OpenClaw Routes', () => {
       const token = getToken('admin-id', 'admin');
 
       const response = await request(app)
-        .post('/api/v1/openclaw/projects/project-1/assign-agent')
+        .post('/api/v1/openclaw/projects/11111111-1111-1111-1111-111111111111/assign-agent')
         .set('Authorization', `Bearer ${token}`)
         .send({ agentId: 'Bad.Agent' });
 
@@ -3008,7 +3100,7 @@ describe('OpenClaw Routes', () => {
       pool.query.mockResolvedValueOnce({ rows: [] });
 
       const response = await request(app)
-        .post('/api/v1/openclaw/projects/project-1/assign-agent')
+        .post('/api/v1/openclaw/projects/11111111-1111-1111-1111-111111111111/assign-agent')
         .set('Authorization', `Bearer ${token}`)
         .send({ agentId: 'cto' });
 
@@ -3021,7 +3113,7 @@ describe('OpenClaw Routes', () => {
       const token = getToken('admin-id', 'admin');
       pool.query
         .mockResolvedValueOnce({
-          rows: [{ id: 'project-1', slug: 'alpha', root_path: '/projects/alpha' }],
+          rows: [{ id: '11111111-1111-1111-1111-111111111111', slug: 'alpha', root_path: '/projects/alpha' }],
         })
         .mockResolvedValueOnce({
           rows: [{ agent_id: 'cto' }],
@@ -3045,7 +3137,7 @@ describe('OpenClaw Routes', () => {
       });
 
       const response = await request(app)
-        .delete('/api/v1/openclaw/projects/project-1')
+        .delete('/api/v1/openclaw/projects/11111111-1111-1111-1111-111111111111')
         .set('Authorization', `Bearer ${token}`);
 
       expect(response.status).toBe(200);
@@ -3057,7 +3149,7 @@ describe('OpenClaw Routes', () => {
       const token = getToken('admin-id', 'admin');
 
       const response = await request(app)
-        .delete('/api/v1/openclaw/projects/project-1/assign-agent/Bad.Agent')
+        .delete('/api/v1/openclaw/projects/11111111-1111-1111-1111-111111111111/assign-agent/Bad.Agent')
         .set('Authorization', `Bearer ${token}`);
 
       expect(response.status).toBe(400);
@@ -3069,7 +3161,7 @@ describe('OpenClaw Routes', () => {
     it('fails unassign when link deletion fails and keeps assignment untouched', async () => {
       const token = getToken('admin-id', 'admin');
       pool.query.mockResolvedValueOnce({
-        rows: [{ id: 'project-1', root_path: '/projects/alpha' }],
+        rows: [{ id: '11111111-1111-1111-1111-111111111111', root_path: '/projects/alpha' }],
       });
 
       global.fetch = jest.fn().mockResolvedValue({
@@ -3079,7 +3171,7 @@ describe('OpenClaw Routes', () => {
       });
 
       const response = await request(app)
-        .delete('/api/v1/openclaw/projects/project-1/assign-agent/cto')
+        .delete('/api/v1/openclaw/projects/11111111-1111-1111-1111-111111111111/assign-agent/cto')
         .set('Authorization', `Bearer ${token}`);
 
       expect(response.status).toBe(500);
