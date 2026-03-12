@@ -205,4 +205,31 @@ describe('sessionListService', () => {
     const result = await deleteSessionByKey({ userId: 'u1', sessionKey: 'agent:main:main' });
     expect(result.deleted).toBe(true);
   });
+
+  it('handles unknown ws result shape and returns empty sessions', async () => {
+    sessionsListAllViaWs.mockResolvedValueOnce({ foo: 'bar' });
+
+    const result = await listSessionsData({ userId: 'u1' });
+    expect(result.sessions).toEqual([]);
+    expect(result.dailyCost).toBe(0);
+  });
+
+  it('handles fallback agent config parse failure and sessions without identifiers', async () => {
+    sessionsListAllViaWs.mockRejectedValueOnce(new Error('ws fail'));
+    makeOpenClawRequest.mockRejectedValueOnce(new Error('config missing'));
+    sessionsList
+      .mockResolvedValueOnce([{}])
+      .mockResolvedValueOnce([{ id: 'ok-id', key: 'agent:coo:main' }])
+      .mockResolvedValue([]);
+
+    const result = await listSessionsData({ userId: 'u1' });
+    expect(result.sessions.length).toBeGreaterThan(0);
+  });
+
+  it('rethrows unknown delete errors', async () => {
+    gatewayWsRpc.mockRejectedValueOnce(new Error('boom'));
+    await expect(
+      deleteSessionByKey({ userId: 'u1', sessionKey: 'agent:main:main' }),
+    ).rejects.toThrow('boom');
+  });
 });

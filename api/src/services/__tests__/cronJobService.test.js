@@ -71,6 +71,28 @@ describe('cronJobService', () => {
     expect(jobs[0].schedule.everyMs).toBe(30 * 60 * 1000);
   });
 
+  it('handles missing heartbeat last-run file gracefully', async () => {
+    makeOpenClawRequest
+      .mockResolvedValueOnce({ content: '{"agents":[]}' })
+      .mockRejectedValueOnce(new Error('missing last file'));
+
+    parseOpenClawConfig.mockReturnValueOnce({
+      agents: {
+        list: [
+          {
+            id: 'cto',
+            identity: { name: 'CTO' },
+            heartbeat: { every: '15m' },
+          },
+        ],
+      },
+    });
+
+    const jobs = await getHeartbeatJobsFromConfig();
+    expect(jobs).toHaveLength(1);
+    expect(jobs[0].lastRunAt).toBeNull();
+  });
+
   it('aggregates cron jobs with execution data and agent enrichment', async () => {
     makeOpenClawRequest
       .mockResolvedValueOnce({ content: '{"agents":[]}' })
@@ -182,6 +204,39 @@ describe('cronJobService', () => {
     expect(data.jobs[0].lastExecution).toBeDefined();
   });
 
+  it('handles gateway cronList service-not-configured by returning only heartbeat jobs', async () => {
+    makeOpenClawRequest.mockResolvedValueOnce({ content: '{"agents":[]}' });
+    parseOpenClawConfig.mockReturnValueOnce({ agents: { list: [] } });
+    cronList.mockRejectedValueOnce({ code: 'SERVICE_NOT_CONFIGURED', message: 'off' });
+
+    gatewayWsRpc
+      .mockResolvedValueOnce({ sessions: [] })
+      .mockResolvedValueOnce({ sessions: [] });
+
+    const data = await getCronJobsData({ userId: 'u1' });
+    expect(Array.isArray(data.jobs)).toBe(true);
+  });
+
+  it('keeps non-gateway non-heartbeat jobs unchanged and marks unavailable when no run match', async () => {
+    makeOpenClawRequest.mockResolvedValueOnce({ content: '{"agents":[]}' });
+    parseOpenClawConfig.mockReturnValueOnce({ agents: { list: [] } });
+
+    cronList.mockResolvedValueOnce([
+      { id: 'custom', source: 'other', agentId: 'x1', payload: { kind: 'systemEvent' } },
+      { id: 'g1', source: 'gateway', agentId: 'x1', payload: { kind: 'systemEvent' } },
+    ]);
+
+    gatewayWsRpc
+      .mockResolvedValueOnce({ sessions: [] })
+      .mockResolvedValueOnce({ sessions: [] });
+
+    const data = await getCronJobsData({ userId: 'u1' });
+    const custom = data.jobs.find((j) => j.id === 'custom');
+    const gateway = data.jobs.find((j) => j.id === 'g1');
+    expect(custom).toBeDefined();
+    expect(gateway.lastExecution.unavailable).toBe(true);
+  });
+
   it('handles missing run-log file by returning empty runs', async () => {
     getFileContent.mockRejectedValueOnce(new Error('missing'));
     const data = await getCronJobRunsData({ userId: 'u1', jobId: 'job-1', limit: 10 });
@@ -207,7 +262,8 @@ describe('cronJobService', () => {
 
   it('maps run log rows into API shape', async () => {
     getFileContent.mockResolvedValueOnce(
-      '{"action":"finished","sessionId":"s1","runAtMs":100,"status":"ok","usage":{"input_tokens":10,"output_tokens":5},"model":"m"}\n',
+      '{"action":"finished","sessionId":"s1","runAtMs":100,"status":"ok","usage":{"input_tokens":10,"output_tokens":5},"model":"m"}\n' +
+        'not-json\n',
     );
 
     const data = await getCronJobRunsData({ userId: 'u1', jobId: 'job-1', limit: 10 });
