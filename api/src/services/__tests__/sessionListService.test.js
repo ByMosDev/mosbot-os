@@ -35,6 +35,13 @@ describe('sessionListService', () => {
     pool.query.mockResolvedValue({ rows: [] });
   });
 
+  it('returns zeroed status counts when ws list fails', async () => {
+    sessionsListAllViaWs.mockRejectedValueOnce(new Error('ws down'));
+
+    const data = await getSessionsStatusData();
+    expect(data).toEqual({ running: 0, active: 0, idle: 0, total: 0 });
+  });
+
   it('returns status counts from sessions.list data', async () => {
     const now = Date.now();
     sessionsListAllViaWs.mockResolvedValue([
@@ -46,40 +53,130 @@ describe('sessionListService', () => {
     const data = await getSessionsStatusData();
     expect(data.total).toBe(3);
     expect(data.running).toBeGreaterThanOrEqual(1);
+    expect(data.idle).toBeGreaterThanOrEqual(1);
   });
 
-  it('lists sessions with dailyCost from usage.cost', async () => {
+  it('lists sessions with enrichment, telegram parsing, and cron latest-run usage', async () => {
+    const now = Date.now();
     sessionsListAllViaWs.mockResolvedValueOnce({
       sessions: [
         {
           id: '1',
-          key: 'agent:main:main',
-          updatedAt: new Date().toISOString(),
+          key: 'agent:main:cron:daily-ops',
+          updatedAt: new Date(now - 15 * 60 * 1000).toISOString(),
+          kind: 'cron',
+          label: 'heartbeat',
           modelProvider: 'openrouter',
-          model: 'anthropic/claude-sonnet-4.5',
+          model: 'openrouter/anthropic/claude-sonnet-4.5',
+          contextTokens: 200,
+          totalTokens: 350,
+          messages: [{ role: 'assistant', content: '' }],
+        },
+        {
+          id: '2',
+          key: 'agent:coo:telegram:group:-100:topic:7',
+          updatedAt: new Date(now - 60 * 1000).toISOString(),
+          kind: 'direct',
+          label: 'Telegram: g-100',
+          modelProvider: 'openrouter',
+          model: 'anthropic/claude-3.5-sonnet',
           contextTokens: 100,
-          totalTokens: 10,
+          totalTokens: 30,
+          lastChannel: 'Ops Topic',
+          messages: [
+            {
+              role: 'assistant',
+              content: [{ type: 'text', text: 'Done' }],
+              provider: 'openrouter',
+              model: 'anthropic/claude-3.5-sonnet',
+              usage: { input: 5, output: 2 },
+            },
+          ],
         },
       ],
     });
 
     gatewayWsRpc
-      .mockResolvedValueOnce({ sessions: [] })
+      .mockResolvedValueOnce({
+        sessions: [
+          {
+            key: 'agent:main:cron:daily-ops',
+            usage: { totalCost: 1.25, input: 100, output: 50, cacheRead: 10, cacheWrite: 5 },
+          },
+          {
+            key: 'agent:main:cron:daily-ops:run:1',
+            usage: {
+              totalCost: 0.5,
+              input: 10,
+              output: 5,
+              cacheRead: 1,
+              cacheWrite: 0,
+              lastActivity: now,
+              messageCounts: { user: 1 },
+            },
+          },
+          {
+            key: 'agent:coo:telegram:group:-100:topic:7',
+            usage: { totalCost: 0.1, input: 5, output: 2, cacheRead: 0, cacheWrite: 0 },
+          },
+        ],
+      })
       .mockResolvedValueOnce({ totals: { totalCost: 4.56 } });
 
+    pool.query.mockResolvedValueOnce({
+      rows: [{ agent_id: 'main', name: 'Main Agent' }, { agent_id: 'coo', name: 'COO' }],
+    });
+
     const result = await listSessionsData({ userId: 'u1' });
+
     expect(result.dailyCost).toBe(4.56);
-    expect(Array.isArray(result.sessions)).toBe(true);
+    expect(result.sessions).toHaveLength(2);
+
+    const cron = result.sessions.find((s) => s.key === 'agent:main:cron:daily-ops');
+    expect(cron).toBeDefined();
+    expect(cron.agentName).toBe('Main Agent');
+    expect(cron.messageCost).toBeGreaterThan(0);
+    expect(cron.totalTokensUsed).toBeLessThanOrEqual(cron.contextTokens);
+
+    const telegram = result.sessions.find((s) => s.key.includes('telegram:group'));
+    expect(telegram).toBeDefined();
+    expect(telegram.agentName).toBe('COO');
+    expect(telegram.topic).toContain('Ops Topic');
+  });
+
+  it('handles ws array response and cost-fetch failure gracefully', async () => {
+    const now = Date.now();
+    sessionsListAllViaWs.mockResolvedValueOnce([
+      {
+        id: '1',
+        key: 'agent:main:isolated',
+        updatedAt: new Date(now - 10 * 60 * 1000).toISOString(),
+        kind: 'direct',
+        model: 'm1',
+        messages: [{ role: 'assistant', content: 'ok', model: 'm1' }],
+      },
+    ]);
+
+    gatewayWsRpc.mockRejectedValueOnce(new Error('cost fail'));
+    pool.query.mockRejectedValueOnce(new Error('db fail'));
+
+    const result = await listSessionsData({ userId: 'u1' });
+    expect(result.dailyCost).toBe(0);
     expect(result.sessions).toHaveLength(1);
+    expect(result.sessions[0].kind).toBe('heartbeat');
   });
 
   it('falls back to per-agent list when websocket list fails', async () => {
     sessionsListAllViaWs.mockRejectedValueOnce(new Error('ws down'));
-    makeOpenClawRequest.mockResolvedValueOnce({ content: JSON.stringify({ agents: { list: [] } }) });
-    sessionsList.mockResolvedValue([]);
+    makeOpenClawRequest.mockResolvedValueOnce({
+      content: JSON.stringify({ agents: { list: [{ id: 'coo' }] } }),
+    });
+    sessionsList
+      .mockResolvedValueOnce([{ id: 'a', key: 'main' }])
+      .mockResolvedValueOnce([{ sessionId: 'b', key: 'agent:coo:main' }]);
 
     const result = await listSessionsData({ userId: 'u1' });
-    expect(result.sessions).toEqual([]);
+    expect(result.sessions.length).toBe(2);
   });
 
   it('validates session key for deletion', async () => {
@@ -92,5 +189,20 @@ describe('sessionListService', () => {
     await expect(
       deleteSessionByKey({ userId: 'u1', sessionKey: 'agent:main:main' }),
     ).rejects.toMatchObject({ status: 501, code: 'NOT_IMPLEMENTED' });
+  });
+
+  it('maps forbidden delete RPC to 403', async () => {
+    gatewayWsRpc.mockRejectedValueOnce(new Error('cannot delete webchat session'));
+
+    await expect(
+      deleteSessionByKey({ userId: 'u1', sessionKey: 'agent:main:main' }),
+    ).rejects.toMatchObject({ status: 403, code: 'FORBIDDEN' });
+  });
+
+  it('deletes session successfully when gateway supports it', async () => {
+    gatewayWsRpc.mockResolvedValueOnce({ ok: true });
+
+    const result = await deleteSessionByKey({ userId: 'u1', sessionKey: 'agent:main:main' });
+    expect(result.deleted).toBe(true);
   });
 });
