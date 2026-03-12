@@ -68,7 +68,7 @@ describe('Projects', () => {
     expect(screen.getByText('Total assigned agents')).toBeInTheDocument();
   });
 
-  it('defaults create-project slug to snake_case and allows hyphens', async () => {
+  it('defaults create-project slug to kebab-case and still allows underscores', async () => {
     getProjects.mockResolvedValue([]);
 
     render(
@@ -84,10 +84,10 @@ describe('Projects', () => {
     fireEvent.click(screen.getByRole('button', { name: 'New Project' }));
     fireEvent.change(screen.getByPlaceholderText('Chaos Codex'), { target: { value: 'Chaos Codex API' } });
 
-    expect(screen.getByPlaceholderText('chaos_codex')).toHaveValue('chaos_codex_api');
+    expect(screen.getByPlaceholderText('chaos-codex')).toHaveValue('chaos-codex-api');
 
-    fireEvent.change(screen.getByPlaceholderText('chaos_codex'), { target: { value: 'chaos-codex_api' } });
-    expect(screen.getByPlaceholderText('chaos_codex')).toHaveValue('chaos-codex_api');
+    fireEvent.change(screen.getByPlaceholderText('chaos-codex'), { target: { value: 'chaos-codex_api' } });
+    expect(screen.getByPlaceholderText('chaos-codex')).toHaveValue('chaos-codex_api');
   });
 
   it('archives a project from the registry', async () => {

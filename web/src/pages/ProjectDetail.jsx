@@ -24,7 +24,7 @@ function normalizeSlug(value) {
   return String(value || '')
     .toLowerCase()
     .trim()
-    .replace(/[^a-z0-9_-]+/g, '_')
+    .replace(/[^a-z0-9_-]+/g, '-')
     .replace(/_+/g, '_')
     .replace(/-+/g, '-')
     .replace(/^[-_]+|[-_]+$/g, '');
@@ -331,7 +331,7 @@ export default function ProjectDetail() {
                   Root path:{' '}
                   <code className="text-dark-300">
                     /projects/
-                    {normalizeSlug(editForm.slug) || 'project_slug'}
+                    {normalizeSlug(editForm.slug) || 'project-slug'}
                   </code>
                 </div>
               </div>
