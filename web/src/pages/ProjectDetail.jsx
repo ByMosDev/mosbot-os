@@ -20,6 +20,16 @@ import {
 import { useAuthStore } from '../stores/authStore';
 import { useToastStore } from '../stores/toastStore';
 
+function normalizeSlug(value) {
+  return String(value || '')
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9_-]+/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/-+/g, '-')
+    .replace(/^[-_]+|[-_]+$/g, '');
+}
+
 function TabButton({ active, onClick, children }) {
   return (
     <button
@@ -115,11 +125,7 @@ export default function ProjectDetail() {
     if (!project?.id) return;
     setIsSaving(true);
     try {
-      const normalizedSlug = editForm.slug
-        .toLowerCase()
-        .trim()
-        .replace(/[^a-z0-9]+/g, '-')
-        .replace(/^-+|-+$/g, '');
+      const normalizedSlug = normalizeSlug(editForm.slug);
 
       const updated = await updateProject(project.id, {
         name: editForm.name.trim(),
@@ -179,11 +185,7 @@ export default function ProjectDetail() {
     try {
       await updateProject(project.id, {
         name: editForm.name.trim(),
-        slug: editForm.slug
-          .toLowerCase()
-          .trim()
-          .replace(/[^a-z0-9]+/g, '-')
-          .replace(/^-+|-+$/g, ''),
+        slug: normalizeSlug(editForm.slug),
         description: editForm.description.trim(),
         status: nextStatus,
         rootPath: project.root_path,
@@ -329,11 +331,7 @@ export default function ProjectDetail() {
                   Root path:{' '}
                   <code className="text-dark-300">
                     /projects/
-                    {editForm.slug
-                      .toLowerCase()
-                      .trim()
-                      .replace(/[^a-z0-9]+/g, '-')
-                      .replace(/^-+|-+$/g, '') || 'project-slug'}
+                    {normalizeSlug(editForm.slug) || 'project_slug'}
                   </code>
                 </div>
               </div>

@@ -23,8 +23,10 @@ function normalizeSlug(value) {
   return String(value || '')
     .toLowerCase()
     .trim()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '');
+    .replace(/[^a-z0-9_-]+/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/-+/g, '-')
+    .replace(/^[-_]+|[-_]+$/g, '');
 }
 
 function ProjectForm({
@@ -100,7 +102,7 @@ function ProjectForm({
             value={form.slug}
             onChange={(e) => handleChange('slug', e.target.value)}
             className="input-field mt-1 w-full"
-            placeholder="chaos-codex"
+            placeholder="chaos_codex"
             required
           />
         </div>
