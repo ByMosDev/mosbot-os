@@ -144,7 +144,7 @@ function ProjectForm({
   );
 }
 
-function ProjectCard({ project, onEdit, onDelete, isAdmin, isDeleting }) {
+function ProjectCard({ project, onEdit, onDelete, onToggleArchive, isAdmin, isDeleting, isTogglingArchive }) {
   const statusClass =
     project.status === 'archived'
       ? 'bg-yellow-900/40 text-yellow-300 border-yellow-700/60'
@@ -197,6 +197,20 @@ function ProjectCard({ project, onEdit, onDelete, isAdmin, isDeleting }) {
               Edit
             </button>
             <button
+              className="btn-secondary inline-flex items-center gap-2 disabled:opacity-50"
+              onClick={() => onToggleArchive(project)}
+              disabled={isTogglingArchive}
+            >
+              <ArchiveBoxIcon className="w-4 h-4" />
+              {isTogglingArchive
+                ? project.status === 'archived'
+                  ? 'Restoring…'
+                  : 'Archiving…'
+                : project.status === 'archived'
+                  ? 'Restore'
+                  : 'Archive'}
+            </button>
+            <button
               className="btn-danger inline-flex items-center gap-2 disabled:opacity-50"
               onClick={() => onDelete(project)}
               disabled={isDeleting}
@@ -223,6 +237,7 @@ export default function Projects() {
   const [editingProject, setEditingProject] = useState(null);
   const [isSavingProject, setIsSavingProject] = useState(false);
   const [deletingProjectId, setDeletingProjectId] = useState(null);
+  const [togglingArchiveProjectId, setTogglingArchiveProjectId] = useState(null);
 
   const loadProjects = useCallback(async () => {
     setIsLoadingProjects(true);
@@ -282,6 +297,34 @@ export default function Projects() {
       showToast(err?.response?.data?.error?.message || err.message || 'Failed to update project', 'error');
     } finally {
       setIsSavingProject(false);
+    }
+  };
+
+  const handleToggleArchiveProject = async (project) => {
+    if (!project?.id) return;
+
+    const nextStatus = project.status === 'archived' ? 'active' : 'archived';
+    setTogglingArchiveProjectId(project.id);
+    try {
+      await updateProject(project.id, {
+        name: project.name,
+        slug: project.slug,
+        description: project.description || '',
+        status: nextStatus,
+        rootPath: project.root_path,
+      });
+      showToast(
+        nextStatus === 'archived' ? `Archived ${project.slug}` : `Restored ${project.slug}`,
+        'success',
+      );
+      if (editingProject?.id === project.id) {
+        setEditingProject((prev) => (prev ? { ...prev, status: nextStatus } : prev));
+      }
+      await loadProjects();
+    } catch (err) {
+      showToast(err?.response?.data?.error?.message || err.message || 'Failed to update project status', 'error');
+    } finally {
+      setTogglingArchiveProjectId(null);
     }
   };
 
@@ -402,8 +445,10 @@ export default function Projects() {
                   project={project}
                   onEdit={setEditingProject}
                   onDelete={handleDeleteProject}
+                  onToggleArchive={handleToggleArchiveProject}
                   isAdmin={isAdmin()}
                   isDeleting={deletingProjectId === project.id}
+                  isTogglingArchive={togglingArchiveProjectId === project.id}
                 />
               ))}
             </div>
@@ -428,8 +473,10 @@ export default function Projects() {
                   project={project}
                   onEdit={setEditingProject}
                   onDelete={handleDeleteProject}
+                  onToggleArchive={handleToggleArchiveProject}
                   isAdmin={isAdmin()}
                   isDeleting={deletingProjectId === project.id}
+                  isTogglingArchive={togglingArchiveProjectId === project.id}
                 />
               ))}
             </div>

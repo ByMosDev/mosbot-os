@@ -51,6 +51,7 @@ export default function ProjectDetail() {
   const [isAssigning, setIsAssigning] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [isTogglingArchive, setIsTogglingArchive] = useState(false);
   const [unassigningAgentId, setUnassigningAgentId] = useState(null);
   const [editForm, setEditForm] = useState({
     name: '',
@@ -167,6 +168,33 @@ export default function ProjectDetail() {
       showToast(err?.response?.data?.error?.message || err.message || 'Failed to unassign agent', 'error');
     } finally {
       setUnassigningAgentId(null);
+    }
+  };
+
+  const handleToggleArchive = async () => {
+    if (!project?.id) return;
+
+    const nextStatus = project.status === 'archived' ? 'active' : 'archived';
+    setIsTogglingArchive(true);
+    try {
+      await updateProject(project.id, {
+        name: editForm.name.trim(),
+        slug: editForm.slug
+          .toLowerCase()
+          .trim()
+          .replace(/[^a-z0-9]+/g, '-')
+          .replace(/^-+|-+$/g, ''),
+        description: editForm.description.trim(),
+        status: nextStatus,
+        rootPath: project.root_path,
+      });
+      showToast(nextStatus === 'archived' ? `Archived ${project.slug}` : `Restored ${project.slug}`, 'success');
+      setEditForm((prev) => ({ ...prev, status: nextStatus }));
+      await loadProject();
+    } catch (err) {
+      showToast(err?.response?.data?.error?.message || err.message || 'Failed to update project status', 'error');
+    } finally {
+      setIsTogglingArchive(false);
     }
   };
 
@@ -321,15 +349,20 @@ export default function ProjectDetail() {
                   </button>
 
                   <div className="flex items-center gap-2">
-                    {project.status === 'archived' ? (
-                      <button
-                        className="btn-secondary inline-flex items-center gap-2 disabled:opacity-50"
-                        onClick={() => setEditForm((prev) => ({ ...prev, status: 'active' }))}
-                      >
-                        <ArchiveBoxIcon className="w-4 h-4" />
-                        Mark active
-                      </button>
-                    ) : null}
+                    <button
+                      className="btn-secondary inline-flex items-center gap-2 disabled:opacity-50"
+                      onClick={handleToggleArchive}
+                      disabled={isTogglingArchive}
+                    >
+                      <ArchiveBoxIcon className="w-4 h-4" />
+                      {isTogglingArchive
+                        ? project.status === 'archived'
+                          ? 'Restoring…'
+                          : 'Archiving…'
+                        : project.status === 'archived'
+                          ? 'Restore project'
+                          : 'Archive project'}
+                    </button>
                     <button
                       className="btn-danger inline-flex items-center gap-2 disabled:opacity-50"
                       onClick={handleDelete}

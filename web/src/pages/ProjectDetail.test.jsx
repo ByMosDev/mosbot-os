@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import ProjectDetail from './ProjectDetail';
 
@@ -28,7 +28,7 @@ vi.mock('../components/WorkspaceExplorer', () => ({
   ),
 }));
 
-const { getProjects, getAgents } = await import('../api/client');
+const { getProjects, getAgents, updateProject } = await import('../api/client');
 
 describe('ProjectDetail', () => {
   beforeEach(() => {
@@ -91,6 +91,31 @@ describe('ProjectDetail', () => {
     const options = Array.from(screen.getAllByRole('option')).map((option) => option.textContent);
     expect(options).toContain('🧭 cc-architect');
     expect(options).not.toContain('🦞 main');
+  });
+
+  it('archives a project from the detail page', async () => {
+    updateProject.mockResolvedValue({ status: 'archived' });
+
+    render(
+      <MemoryRouter initialEntries={['/projects/chaos-codex']}>
+        <Routes>
+          <Route path="/projects/:slug" element={<ProjectDetail />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Archive project' })).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Archive project' }));
+
+    await waitFor(() => {
+      expect(updateProject).toHaveBeenCalledWith(
+        'p1',
+        expect.objectContaining({ status: 'archived', rootPath: '/projects/chaos-codex' }),
+      );
+    });
   });
 
   it('renders workspace explorer on files route', async () => {

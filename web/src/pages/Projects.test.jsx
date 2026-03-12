@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import Projects from './Projects';
 
@@ -18,7 +18,7 @@ vi.mock('../stores/toastStore', () => ({
   useToastStore: () => ({ showToast: vi.fn() }),
 }));
 
-const { getProjects } = await import('../api/client');
+const { getProjects, updateProject } = await import('../api/client');
 
 describe('Projects', () => {
   beforeEach(() => {
@@ -66,5 +66,37 @@ describe('Projects', () => {
     expect(screen.getByText('Active projects')).toBeInTheDocument();
     expect(screen.getByText('Archived projects')).toBeInTheDocument();
     expect(screen.getByText('Total assigned agents')).toBeInTheDocument();
+  });
+
+  it('archives a project from the registry', async () => {
+    getProjects.mockResolvedValue([
+      {
+        id: 'p1',
+        slug: 'chaos-codex',
+        name: 'Chaos Codex',
+        description: 'BRP companion app',
+        root_path: '/projects/chaos-codex',
+        status: 'active',
+        assigned_agents: 3,
+        updated_at: '2026-03-12T19:00:00.000Z',
+      },
+    ]);
+    updateProject.mockResolvedValue({ status: 'archived' });
+
+    render(
+      <MemoryRouter>
+        <Projects />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Archive' })).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Archive' }));
+
+    await waitFor(() => {
+      expect(updateProject).toHaveBeenCalledWith('p1', expect.objectContaining({ status: 'archived' }));
+    });
   });
 });
