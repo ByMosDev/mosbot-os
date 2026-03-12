@@ -826,6 +826,71 @@ async function getAssignedProjectsForAgent(agentId) {
   return result.rows || [];
 }
 
+async function mapWithConcurrency(items, limit, worker) {
+  const normalizedLimit = Math.max(1, Number(limit) || 1);
+  const queue = [...items];
+  const results = [];
+
+  const runners = Array.from({ length: Math.min(normalizedLimit, queue.length) }, async () => {
+    while (queue.length > 0) {
+      const item = queue.shift();
+      if (!item) continue;
+      const result = await worker(item);
+      results.push(result);
+    }
+  });
+
+  await Promise.all(runners);
+  return results;
+}
+
+async function loadActiveProjectsWithAssignments(projectIdFilter = null) {
+  const rowsResult = await pool.query(
+    `SELECT p.id, p.slug, p.name, p.root_path, apa.agent_id
+       FROM projects p
+       LEFT JOIN agent_project_assignments apa ON apa.project_id = p.id
+      WHERE p.status = 'active'
+        AND ($1::uuid IS NULL OR p.id = $1)
+      ORDER BY p.slug ASC, apa.agent_id ASC`,
+    [projectIdFilter || null],
+  );
+
+  const projectMap = new Map();
+  for (const row of rowsResult.rows || []) {
+    if (!projectMap.has(row.id)) {
+      projectMap.set(row.id, {
+        projectId: row.id,
+        slug: row.slug,
+        name: row.name,
+        rootPath: row.root_path,
+        assignedAgents: new Set(),
+      });
+    }
+    if (row.agent_id) {
+      projectMap.get(row.id).assignedAgents.add(row.agent_id);
+    }
+  }
+
+  return [...projectMap.values()];
+}
+
+function expandProjectAgentTargets(projects, agentIdFilter = '') {
+  const targets = [];
+  for (const project of projects) {
+    const agentIds = new Set(['main', ...project.assignedAgents]);
+    for (const agentId of agentIds) {
+      if (agentIdFilter && agentId !== agentIdFilter) continue;
+      targets.push({
+        projectId: project.projectId,
+        slug: project.slug,
+        rootPath: project.rootPath,
+        agentId,
+      });
+    }
+  }
+  return targets;
+}
+
 function createDefaultProjectOnboarding() {
   return {
     hasAssignedProject: false,
@@ -1240,17 +1305,9 @@ router.get('/projects/link-health', requireAuth, requireAdmin, async (req, res, 
       });
     }
 
-    let rowsResult;
+    let projects;
     try {
-      rowsResult = await pool.query(
-        `SELECT p.id, p.slug, p.name, p.root_path, apa.agent_id
-           FROM projects p
-           LEFT JOIN agent_project_assignments apa ON apa.project_id = p.id
-          WHERE p.status = 'active'
-            AND ($1::uuid IS NULL OR p.id = $1)
-          ORDER BY p.slug ASC, apa.agent_id ASC`,
-        [projectIdFilter || null],
-      );
+      projects = await loadActiveProjectsWithAssignments(projectIdFilter || null);
     } catch (error) {
       if (error.code === '42P01') {
         return res.json({ data: [] });
@@ -1258,54 +1315,33 @@ router.get('/projects/link-health', requireAuth, requireAdmin, async (req, res, 
       throw error;
     }
 
-    const projectMap = new Map();
-    for (const row of rowsResult.rows || []) {
-      if (!projectMap.has(row.id)) {
-        projectMap.set(row.id, {
-          projectId: row.id,
-          slug: row.slug,
-          name: row.name,
-          rootPath: row.root_path,
-          assignedAgents: new Set(),
-        });
+    const tasks = expandProjectAgentTargets(projects, agentIdFilter);
+    const checks = await mapWithConcurrency(tasks, 5, async (task) => {
+      try {
+        const linkState = await makeOpenClawRequest(
+          'GET',
+          `/links/project/${encodeURIComponent(task.agentId)}?targetPath=${encodeURIComponent(task.rootPath)}`,
+        );
+        return {
+          projectId: task.projectId,
+          slug: task.slug,
+          rootPath: task.rootPath,
+          agentId: task.agentId,
+          state: linkState?.state || 'unknown',
+          conflict: linkState?.conflict || null,
+        };
+      } catch (linkError) {
+        return {
+          projectId: task.projectId,
+          slug: task.slug,
+          rootPath: task.rootPath,
+          agentId: task.agentId,
+          state: 'error',
+          errorCode: linkError?.code || null,
+          status: linkError?.status || null,
+        };
       }
-      if (row.agent_id) {
-        projectMap.get(row.id).assignedAgents.add(row.agent_id);
-      }
-    }
-
-    const checks = [];
-    for (const project of projectMap.values()) {
-      const targets = new Set(['main', ...project.assignedAgents]);
-      for (const targetAgentId of targets) {
-        if (agentIdFilter && targetAgentId !== agentIdFilter) continue;
-
-        try {
-          const linkState = await makeOpenClawRequest(
-            'GET',
-            `/links/project/${encodeURIComponent(targetAgentId)}?targetPath=${encodeURIComponent(project.rootPath)}`,
-          );
-          checks.push({
-            projectId: project.projectId,
-            slug: project.slug,
-            rootPath: project.rootPath,
-            agentId: targetAgentId,
-            state: linkState?.state || 'unknown',
-            conflict: linkState?.conflict || null,
-          });
-        } catch (linkError) {
-          checks.push({
-            projectId: project.projectId,
-            slug: project.slug,
-            rootPath: project.rootPath,
-            agentId: targetAgentId,
-            state: 'error',
-            errorCode: linkError?.code || null,
-            status: linkError?.status || null,
-          });
-        }
-      }
-    }
+    });
 
     res.json({ data: checks });
   } catch (error) {
@@ -1333,71 +1369,46 @@ router.post('/projects/link-health/repair', requireAuth, requireAdmin, async (re
       });
     }
 
-    let rowsResult;
+    let projects;
     try {
-      rowsResult = await pool.query(
-        `SELECT p.id, p.slug, p.name, p.root_path, apa.agent_id
-           FROM projects p
-           LEFT JOIN agent_project_assignments apa ON apa.project_id = p.id
-          WHERE p.status = 'active'
-            AND ($1::uuid IS NULL OR p.id = $1)
-          ORDER BY p.slug ASC, apa.agent_id ASC`,
-        [projectIdFilter || null],
-      );
+      projects = await loadActiveProjectsWithAssignments(projectIdFilter || null);
     } catch (error) {
       if (error.code === '42P01') {
         return res.json({
-          data: { attempted: 0, repaired: 0, unchanged: 0, conflicts: 0, failed: 0, results: [] },
+          data: {
+            attempted: 0,
+            repaired: 0,
+            unchanged: 0,
+            conflicts: 0,
+            failed: 0,
+            skipped: 0,
+            unknown: 0,
+            results: [],
+          },
         });
       }
       throw error;
     }
 
-    const projectMap = new Map();
-    for (const row of rowsResult.rows || []) {
-      if (!projectMap.has(row.id)) {
-        projectMap.set(row.id, {
-          projectId: row.id,
-          slug: row.slug,
-          name: row.name,
-          rootPath: row.root_path,
-          assignedAgents: new Set(),
-        });
-      }
-      if (row.agent_id) {
-        projectMap.get(row.id).assignedAgents.add(row.agent_id);
-      }
-    }
-
-    const results = [];
-    for (const project of projectMap.values()) {
-      const targets = new Set(['main', ...project.assignedAgents]);
-      for (const targetAgentId of targets) {
-        if (agentIdFilter && targetAgentId !== agentIdFilter) continue;
-
-        try {
-          const reconcile = await ensureProjectLinkIfMissing(targetAgentId, project.rootPath);
-          results.push({
-            projectId: project.projectId,
-            slug: project.slug,
-            rootPath: project.rootPath,
-            agentId: targetAgentId,
-            action: reconcile?.action || 'unknown',
-            state: reconcile?.state || null,
-          });
-        } catch (reconcileError) {
-          results.push({
-            projectId: project.projectId,
-            slug: project.slug,
-            rootPath: project.rootPath,
-            agentId: targetAgentId,
-            action: 'error',
-            status: reconcileError?.status || null,
-            errorCode: reconcileError?.code || null,
-          });
-        }
-      }
-    }
+    const tasks = expandProjectAgentTargets(projects, agentIdFilter);
+    const results = await mapWithConcurrency(tasks, 5, async (task) => {
+      const reconcile = await ensureProjectLinkIfMissing(task.agentId, task.rootPath);
+      const action = reconcile?.action || 'unknown';
+      return {
+        projectId: task.projectId,
+        slug: task.slug,
+        rootPath: task.rootPath,
+        agentId: task.agentId,
+        action,
+        state: reconcile?.state || null,
+        ...(action === 'error'
+          ? {
+              errorCode: reconcile?.errorCode || 'RECONCILE_FAILED',
+              message: 'project link reconciliation failed',
+            }
+          : {}),
+      };
+    });
 
     const summary = {
       attempted: results.length,
@@ -1405,6 +1416,8 @@ router.post('/projects/link-health/repair', requireAuth, requireAdmin, async (re
       unchanged: results.filter((item) => item.action === 'unchanged').length,
       conflicts: results.filter((item) => item.action === 'conflict').length,
       failed: results.filter((item) => item.action === 'error').length,
+      skipped: results.filter((item) => item.action === 'skipped').length,
+      unknown: results.filter((item) => item.action === 'unknown').length,
     };
 
     res.json({ data: { ...summary, results } });
