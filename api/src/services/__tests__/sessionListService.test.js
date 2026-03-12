@@ -23,6 +23,7 @@ jest.mock('../sessionUsageService', () => ({
 const pool = require('../../db/pool');
 const { makeOpenClawRequest } = require('../openclawWorkspaceClient');
 const { gatewayWsRpc, sessionsListAllViaWs, sessionsList } = require('../openclawGatewayClient');
+const { upsertSessionUsageBatch } = require('../sessionUsageService');
 const {
   getSessionsStatusData,
   listSessionsData,
@@ -54,6 +55,14 @@ describe('sessionListService', () => {
     expect(data.total).toBe(3);
     expect(data.running).toBeGreaterThanOrEqual(1);
     expect(data.idle).toBeGreaterThanOrEqual(1);
+  });
+
+  it('supports object {sessions: [...]} shape for status endpoint', async () => {
+    sessionsListAllViaWs.mockResolvedValueOnce({
+      sessions: [{ updatedAt: new Date().toISOString() }],
+    });
+    const data = await getSessionsStatusData();
+    expect(data.total).toBe(1);
   });
 
   it('lists sessions with enrichment, telegram parsing, and cron latest-run usage', async () => {
@@ -164,6 +173,62 @@ describe('sessionListService', () => {
     expect(result.dailyCost).toBe(0);
     expect(result.sessions).toHaveLength(1);
     expect(result.sessions[0].kind).toBe('heartbeat');
+  });
+
+  it('covers model derivation fallbacks, truncation, and async usage upsert failure', async () => {
+    const now = Date.now();
+    sessionsListAllViaWs.mockResolvedValueOnce({
+      sessions: [
+        {
+          id: 's1',
+          key: 'agent:main:main',
+          updatedAt: new Date(now - 60 * 1000).toISOString(),
+          messages: [
+            {
+              role: 'assistant',
+              provider: 'openrouter',
+              model: 'openrouter/openrouter/anthropic/claude-3.5-sonnet',
+              content: 'x'.repeat(260),
+              usage: { input: 5, output: 2 },
+            },
+          ],
+          contextTokens: 100,
+          totalTokens: 20,
+        },
+        {
+          id: 's2',
+          key: 'agent:coo:cron:daily',
+          kind: 'cron',
+          updatedAt: new Date(now - 40 * 60 * 1000).toISOString(),
+          messages: [{ timestamp: now - 20 * 60 * 1000, content: 'heartbeat msg' }],
+          model: 'plain-model',
+          contextTokens: 50,
+          totalTokens: 100,
+        },
+      ],
+    });
+
+    gatewayWsRpc
+      .mockResolvedValueOnce({
+        sessions: [
+          { key: 'agent:coo:cron:daily', usage: { totalCost: 2, input: 12, output: 6 } },
+          {
+            key: 'agent:coo:cron:daily:run:1',
+            usage: { totalCost: 1, input: 4, output: 2, messageCounts: { user: 2 }, lastActivity: now },
+          },
+        ],
+      })
+      .mockResolvedValueOnce({ totals: { totalCost: 1.23 } });
+
+    pool.query.mockResolvedValueOnce({ rows: [] });
+    upsertSessionUsageBatch.mockRejectedValueOnce(new Error('upsert failed'));
+
+    const result = await listSessionsData({ userId: 'u1' });
+    expect(result.sessions).toHaveLength(2);
+    const first = result.sessions.find((s) => s.id === 's1');
+    expect(first.lastMessage.length).toBeLessThanOrEqual(203);
+    const cron = result.sessions.find((s) => s.id === 's2');
+    expect(['active', 'running']).toContain(cron.status);
   });
 
   it('falls back to per-agent list when websocket list fails', async () => {
