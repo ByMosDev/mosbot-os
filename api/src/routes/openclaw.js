@@ -604,8 +604,8 @@ ${introLine}
 
 \`\`\`json
 ${JSON.stringify(profile, null, 2)}
-\`\`\`${projectScopeSection}
-
+\`\`\`
+${projectScopeSection}
 ## First-run mission
 
 1. Read \`./tools/INTEGRATION.md\` and \`./TOOLS.md\`.
@@ -796,6 +796,12 @@ function createDefaultProjectOnboarding() {
   };
 }
 
+function normalizeWorkspaceDirPath(inputPath) {
+  const normalized = normalizeAndValidateWorkspacePath(inputPath);
+  if (normalized === '/') return normalized;
+  return normalized.replace(/\/+$/, '');
+}
+
 async function buildAgentProjectOnboardingContext(agentId) {
   const assignedProjects = await getAssignedProjectsForAgent(agentId);
   if (!Array.isArray(assignedProjects) || assignedProjects.length === 0) {
@@ -805,14 +811,35 @@ async function buildAgentProjectOnboardingContext(agentId) {
   const projectResults = [];
 
   for (const project of assignedProjects) {
-    const rootPath = project?.root_path || null;
+    const rootPathRaw = project?.root_path || null;
     const contractPathRaw = project?.contract_path || null;
     const projectRef = project?.slug || project?.id || 'unknown';
+
+    let normalizedRootPath = null;
+    if (rootPathRaw) {
+      try {
+        normalizedRootPath = normalizeWorkspaceDirPath(rootPathRaw);
+      } catch (_normalizeRootError) {
+        projectResults.push({
+          project: {
+            id: project?.id || null,
+            slug: project?.slug || null,
+            name: project?.name || null,
+            rootPath: rootPathRaw,
+            contractPath: contractPathRaw,
+            contractStatus: 'unknown',
+          },
+          warnings: [`project ${projectRef} has invalid root path (${rootPathRaw})`],
+        });
+        continue;
+      }
+    }
+
     const projectBase = {
       id: project?.id || null,
       slug: project?.slug || null,
       name: project?.name || null,
-      rootPath,
+      rootPath: normalizedRootPath || rootPathRaw,
     };
 
     if (!contractPathRaw) {
@@ -842,27 +869,11 @@ async function buildAgentProjectOnboardingContext(agentId) {
       continue;
     }
 
-    if (rootPath) {
-      let normalizedRootPath = rootPath;
-      try {
-        normalizedRootPath = normalizeAndValidateWorkspacePath(rootPath);
-      } catch (_normalizeRootError) {
+    if (normalizedRootPath) {
+      if (contractPath !== normalizedRootPath && !contractPath.startsWith(`${normalizedRootPath}/`)) {
         projectResults.push({
           project: {
             ...projectBase,
-            contractPath,
-            contractStatus: 'unknown',
-          },
-          warnings: [`project ${projectRef} has invalid root path (${rootPath})`],
-        });
-        continue;
-      }
-
-      if (!contractPath.startsWith(`${normalizedRootPath}/`)) {
-        projectResults.push({
-          project: {
-            ...projectBase,
-            rootPath: normalizedRootPath,
             contractPath,
             contractStatus: 'unknown',
           },
