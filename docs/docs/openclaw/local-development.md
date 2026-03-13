@@ -32,7 +32,7 @@ names to match your deployment:
 kubectl get secret -n openclaw-personal openclaw-secrets \
   -o jsonpath='{.data.WORKSPACE_SERVICE_TOKEN}' | base64 -d && echo
 
-# Gateway token (if used)
+# Gateway token
 kubectl get secret -n openclaw-personal openclaw-secrets \
   -o jsonpath='{.data.OPENCLAW_GATEWAY_TOKEN}' | base64 -d && echo
 ```
@@ -83,7 +83,20 @@ npm run dev
 docker compose restart api
 ```
 
-## Step 5: Verify
+## Step 5: Complete device pairing
+
+Gateway features now require a one-time dashboard pairing step:
+
+1. Sign in to MosBot as an `owner` or `admin`
+2. Open `Settings -> OpenClaw Pairing`
+3. Click `Start pairing`
+4. Approve the pending MosBot device in OpenClaw
+5. Click `Finalize pairing`
+
+You only need to do this once per MosBot deployment unless you intentionally reset the integration
+state.
+
+## Step 6: Verify
 
 ### Check agent discovery
 
@@ -111,14 +124,24 @@ curl -H "Authorization: Bearer $TOKEN" \
   http://localhost:3000/api/v1/openclaw/workspace/status
 ```
 
+### Check pairing status
+
+```bash
+curl -H "Authorization: Bearer $TOKEN" \
+  http://localhost:3000/api/v1/openclaw/integration/status
+```
+
+The status should become `ready` after approval and finalize.
+
 ## Troubleshooting
 
 | Symptom                   | Cause                                                    | Fix                                                                 |
 | ------------------------- | -------------------------------------------------------- | ------------------------------------------------------------------- |
-| 503 errors                | Port-forward stopped or service restarted                | Restart the port-forward in the terminal                            |
-| Connection refused        | Wrong namespace/service name or port-forward not running | Check service names: `kubectl get svc -n <namespace>`               |
-| 401 Unauthorized          | Token mismatch                                           | Re-fetch the token from Kubernetes secrets                          |
-| Only seeing default agent | API can't reach workspace service                        | Verify `OPENCLAW_WORKSPACE_URL` and that the port-forward is active |
+| 503 errors                    | Port-forward stopped or service restarted                | Restart the port-forward in the terminal                            |
+| Connection refused            | Wrong namespace/service name or port-forward not running | Check service names: `kubectl get svc -n <namespace>`               |
+| 401 Unauthorized              | Token mismatch                                           | Re-fetch the token from Kubernetes secrets                          |
+| Pairing stuck at `pending_pairing` | Device request not yet approved in OpenClaw        | Approve the pending MosBot device, then finalize pairing            |
+| Only seeing default agent     | API can't reach workspace service                        | Verify `OPENCLAW_WORKSPACE_URL` and that the port-forward is active |
 
 ## Tips
 

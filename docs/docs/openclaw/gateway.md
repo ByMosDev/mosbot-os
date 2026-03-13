@@ -29,8 +29,7 @@ The gateway is configured under the `gateway` section of `openclaw.json`:
     "mode": "local",
     "bind": "lan",
     "controlUi": {
-      "allowedOrigins": ["http://localhost:18789", "https://your-domain.example.com"],
-      "allowInsecureAuth": true
+      "allowedOrigins": ["http://localhost:18789", "https://your-domain.example.com"]
     },
     "auth": {
       "mode": "token"
@@ -70,12 +69,28 @@ may need to configure Node.js to accept it. In development, you can set
 `NODE_TLS_REJECT_UNAUTHORIZED=0` in your `.env` (never in production). For production, use a
 properly signed certificate or a reverse proxy that handles TLS termination. :::
 
-## Device authentication (optional)
+## Device pairing workflow
 
-For full session access with `operator.read` and `operator.write` scopes, MosBot API can
-authenticate as a paired device. This is required for some advanced session operations.
+MosBot now requires device-authenticated gateway access for runtime RPCs. The gateway token remains
+part of the bootstrap handshake, but owner/admin users must complete a one-time pairing flow in the
+dashboard before session data and runtime control become available.
 
-Device credentials are generated through the OpenClaw device pairing flow and configured in `.env`:
+### Pairing steps
+
+1. Configure `OPENCLAW_GATEWAY_URL` and `OPENCLAW_GATEWAY_TOKEN`
+2. Restart MosBot API
+3. Sign in as an `owner` or `admin`
+4. Open `Settings -> OpenClaw Pairing`
+5. Click `Start pairing`
+6. Approve the pending MosBot device in OpenClaw
+7. Click `Finalize pairing`
+
+MosBot persists the paired device identity after the workflow completes.
+
+### Manual device credentials (advanced)
+
+If you need to pre-provision device auth instead of pairing through the dashboard, MosBot can still
+read these environment variables:
 
 ```bash
 OPENCLAW_DEVICE_ID=your-device-id
@@ -83,8 +98,6 @@ OPENCLAW_DEVICE_PUBLIC_KEY=your-ed25519-public-key-base64url
 OPENCLAW_DEVICE_PRIVATE_KEY=your-ed25519-private-key-base64url
 OPENCLAW_DEVICE_TOKEN=your-device-token
 ```
-
-Refer to OpenClaw's documentation for the device pairing procedure.
 
 ## Verifying gateway connectivity
 
@@ -104,11 +117,18 @@ curl -H "Authorization: Bearer $TOKEN" \
 
 ## Troubleshooting
 
-**Agent Monitor shows no data** The gateway is not connected. Check:
+**Agent Monitor shows no data** The gateway is not connected or pairing is incomplete. Check:
 
 - `OPENCLAW_GATEWAY_URL` is set and correct
 - The gateway is running and accessible
 - `OPENCLAW_GATEWAY_TOKEN` is correct
+- The MosBot device has been approved and pairing is `ready`
+
+**Pairing wizard cannot connect** Check:
+
+- `gateway.controlUi.allowedOrigins` includes the gateway origin MosBot is using
+- `OPENCLAW_GATEWAY_URL` matches the actual gateway scheme and host
+- The gateway token is valid
 
 **Connection timeout** The gateway is unreachable or slow. Increase `OPENCLAW_GATEWAY_TIMEOUT_MS` or
 check network connectivity.

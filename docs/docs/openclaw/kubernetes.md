@@ -113,6 +113,9 @@ env:
         key: OPENCLAW_GATEWAY_TOKEN
 ```
 
+After the API is deployed and the secrets are configured, sign in to MosBot as an `owner` or
+`admin` and complete `Settings -> OpenClaw Pairing` once for that deployment.
+
 ## MosBot API Kubernetes manifests
 
 The monorepo includes Kubernetes manifests under `api/k8s/` (Kustomize layout):

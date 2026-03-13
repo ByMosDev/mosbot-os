@@ -83,6 +83,52 @@ kubectl get secret -n openclaw-personal openclaw-secrets \
 
 ---
 
+### `OPENCLAW_PAIRING_REQUIRED` on sessions/config/runtime pages
+
+**Cause**: MosBot can reach the gateway, but the integration has not completed device pairing.
+
+**Fix**:
+
+1. Sign in as an `owner` or `admin`
+2. Open `Settings -> OpenClaw Pairing`
+3. Click `Start pairing`
+4. Approve the pending MosBot device in OpenClaw
+5. Click `Finalize pairing`
+
+If the page still shows `paired_missing_scopes`, verify the gateway granted the expected operator
+scopes and try finalizing again.
+
+---
+
+### Pairing wizard shows "origin not allowed"
+
+**Cause**: `gateway.controlUi.allowedOrigins` does not include the exact origin the MosBot gateway
+client is using.
+
+**Fix**:
+
+1. Check the gateway host and scheme in `OPENCLAW_GATEWAY_URL`
+2. Add the matching origin to `gateway.controlUi.allowedOrigins`
+3. Restart or reload OpenClaw if needed
+
+Example:
+
+```json
+{
+  "gateway": {
+    "controlUi": {
+      "allowedOrigins": [
+        "http://localhost:18789",
+        "http://127.0.0.1:18789",
+        "http://openclaw-gateway:18789"
+      ]
+    }
+  }
+}
+```
+
+---
+
 ### Only seeing one agent (the default agent)
 
 **Cause**: MosBot API cannot reach the workspace service, so it falls back to returning only the
@@ -209,7 +255,8 @@ sessions.
 
 1. Verify `OPENCLAW_GATEWAY_URL` and `OPENCLAW_GATEWAY_TOKEN` are set
 2. Check that the gateway is running
-3. Verify agents have had recent sessions
+3. Verify MosBot pairing status is `ready`
+4. Verify agents have had recent sessions
 
 ---
 

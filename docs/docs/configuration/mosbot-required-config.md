@@ -37,39 +37,39 @@ missing, the browser will block WebSocket and API calls to the gateway with a CO
 
 ---
 
-## Gateway: insecure auth (development fallback)
+## Gateway: pairing prerequisites
 
-**Required when device auth is not configured.**
+**Required for MosBot's device pairing workflow.**
 
 ```json
 {
   "gateway": {
     "controlUi": {
-      "allowInsecureAuth": true
+      "allowedOrigins": [
+        "http://localhost:18789",
+        "http://127.0.0.1:18789",
+        "https://your-openclaw-domain.example.com"
+      ]
     }
   }
 }
 ```
 
-MosBot API connects to the gateway via WebSocket using one of two auth paths:
+MosBot API now uses the dashboard pairing wizard to provision a device-authenticated gateway
+identity. For that flow to work:
 
-| Path                       | When used                                          | What it grants                          |
-| -------------------------- | -------------------------------------------------- | --------------------------------------- |
-| **Device auth**            | `OPENCLAW_DEVICE_*` env vars are set in MosBot API | Full `operator.read/write` scopes       |
-| **Insecure auth fallback** | Device auth vars are not set                       | Operator scopes via `allowInsecureAuth` |
+- `gateway.auth.mode` must be `token`
+- `gateway.controlUi.allowedOrigins` must include the actual gateway origin MosBot opens
+- `OPENCLAW_GATEWAY_TOKEN` must be configured in MosBot API
+- An `owner` or `admin` must complete `Settings -> OpenClaw Pairing`
 
-If you have not configured device auth credentials in MosBot API's `.env`, set
-`allowInsecureAuth: true` in `openclaw.json`. Without it, the gateway will reject MosBot's
-connection and the Agent Monitor will show no data.
-
-:::note In production, prefer device auth over `allowInsecureAuth`. See
-[Device Authentication](#device-authentication) below. :::
+MosBot no longer relies on `allowInsecureAuth` as an operational fallback for gateway RPCs.
 
 ---
 
 ## Gateway: authentication mode
 
-**Required for bearer token auth.**
+**Required for gateway token bootstrap auth.**
 
 ```json
 {
@@ -81,8 +81,8 @@ connection and the Agent Monitor will show no data.
 }
 ```
 
-Set `auth.mode: "token"` so MosBot API can authenticate using the `OPENCLAW_GATEWAY_TOKEN`
-environment variable.
+Set `auth.mode: "token"` so MosBot API can bootstrap the pairing handshake using the
+`OPENCLAW_GATEWAY_TOKEN` environment variable.
 
 ---
 
@@ -247,25 +247,39 @@ Always reference the bot token via `${TELEGRAM_BOT_TOKEN}` — never hardcode it
 
 ---
 
-## Device authentication
+## Device pairing workflow
 
-**Recommended for production: full operator scopes without `allowInsecureAuth`.**
+**Required for full gateway-backed MosBot features.**
 
 Device auth uses an Ed25519 key pair to authenticate MosBot API as a trusted device. Once paired,
-MosBot receives `operator.read`, `operator.write`, and `operator.admin` scopes, enabling full
-session access.
+MosBot receives the operator scopes it needs for session visibility, usage, and runtime control.
 
-### Step 1: Generate credentials in OpenClaw
+### Step 1: Configure gateway bootstrap
 
-Follow OpenClaw's device pairing procedure to generate:
+Add these values to MosBot API's `.env`:
 
-- A device ID
-- An Ed25519 public/private key pair
-- A device token
+```bash
+OPENCLAW_GATEWAY_URL=http://localhost:18789
+OPENCLAW_GATEWAY_TOKEN=your-gateway-token
+```
 
-### Step 2: Configure MosBot API
+### Step 2: Start pairing in MosBot
 
-Add the credentials to `.env`:
+1. Restart MosBot API
+2. Sign in as an `owner` or `admin`
+3. Open `Settings -> OpenClaw Pairing`
+4. Click `Start pairing`
+
+### Step 3: Approve and finalize
+
+1. Approve the pending MosBot device in OpenClaw
+2. Return to MosBot and click `Finalize pairing`
+3. Confirm the integration status is `ready`
+
+### Manual device credentials (advanced)
+
+MosBot can also use pre-provisioned device auth credentials when you intentionally manage them
+outside the dashboard flow:
 
 ```bash
 OPENCLAW_DEVICE_ID=your-device-id
@@ -273,11 +287,6 @@ OPENCLAW_DEVICE_PUBLIC_KEY=your-ed25519-public-key-base64url
 OPENCLAW_DEVICE_PRIVATE_KEY=your-ed25519-private-key-base64url
 OPENCLAW_DEVICE_TOKEN=your-device-token
 ```
-
-### Step 3: Remove `allowInsecureAuth`
-
-Once device auth is working, you can remove `allowInsecureAuth: true` from `openclaw.json` (or set
-it to `false`).
 
 ---
 
@@ -320,8 +329,7 @@ The smallest `openclaw.json` that gives MosBot full functionality:
     "mode": "local",
     "bind": "lan",
     "controlUi": {
-      "allowedOrigins": ["http://localhost:18789", "https://your-mosbot-dashboard.example.com"],
-      "allowInsecureAuth": true
+      "allowedOrigins": ["http://localhost:18789", "https://your-mosbot-dashboard.example.com"]
     },
     "auth": {
       "mode": "token"
@@ -346,7 +354,7 @@ The smallest `openclaw.json` that gives MosBot full functionality:
 | Setting                                 | Required for                      | Default if missing    |
 | --------------------------------------- | --------------------------------- | --------------------- |
 | `gateway.controlUi.allowedOrigins`      | Dashboard → gateway communication | CORS errors           |
-| `gateway.controlUi.allowInsecureAuth`   | Gateway auth without device auth  | Connection rejected   |
+| `gateway.controlUi.allowedOrigins`      | Pairing WebSocket origin checks   | Origin mismatch errors |
 | `gateway.auth.mode: "token"`            | Bearer token auth                 | Auth may fail         |
 | `tools.sessions.visibility: "agent"`    | Agent Monitor session data        | Empty session list    |
 | `tools.agentToAgent.enabled`            | Subagent tracking                 | Subagents not tracked |
