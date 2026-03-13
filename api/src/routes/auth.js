@@ -345,7 +345,12 @@ const authenticateToken = async (req, res, next) => {
     }
 
     // Use fresh role from DB (not stale JWT claims)
-    req.user = { ...decoded, active: result.rows[0].active, role: result.rows[0].role };
+    req.user = {
+      ...decoded,
+      active: result.rows[0].active,
+      role: result.rows[0].role,
+      agent_id: decoded.agent_id || null,
+    };
     next();
   } catch (_err) {
     return res.status(401).json({

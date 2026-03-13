@@ -8,7 +8,72 @@ function registerOpenClawWorkspaceRoutes({
   makeOpenClawRequest,
   normalizeRemapAndValidateWorkspacePath,
   isAllowedWorkspacePath,
+  getAssignedProjectRootPaths,
 }) {
+  const isWithinPath = (targetPath, rootPath) =>
+    targetPath === rootPath || targetPath.startsWith(`${rootPath}/`);
+
+  const isAgentPrivateWritablePath = (workspacePath, agentId) =>
+    isWithinPath(workspacePath, `/workspace-${agentId}`) || isWithinPath(workspacePath, '/memory');
+
+  const enforceWriteScope = async (req, workspacePath) => {
+    const role = req.user?.role;
+
+    // Admin/owner are explicit elevated roles.
+    if (role === 'admin' || role === 'owner') {
+      return null;
+    }
+
+    if (role !== 'agent') {
+      return {
+        status: 403,
+        error: {
+          message: 'Admin, owner, or agent role required for workspace writes',
+          status: 403,
+          code: 'INSUFFICIENT_PERMISSIONS',
+        },
+      };
+    }
+
+    const agentId = String(req.user?.agent_id || '').trim();
+    if (!agentId) {
+      return {
+        status: 403,
+        error: {
+          message: 'Agent write scope cannot be resolved without agent_id',
+          status: 403,
+          code: 'AGENT_SCOPE_UNRESOLVED',
+        },
+      };
+    }
+
+    if (isAgentPrivateWritablePath(workspacePath, agentId)) {
+      return null;
+    }
+
+    const assignedProjectRoots = await getAssignedProjectRootPaths(agentId);
+    const inAssignedProject = assignedProjectRoots.some((rootPath) => isWithinPath(workspacePath, rootPath));
+
+    if (inAssignedProject) {
+      return null;
+    }
+
+    return {
+      status: 403,
+      error: {
+        message:
+          'Write blocked by project scope guardrail: path is outside agent-private paths and assigned project roots',
+        status: 403,
+        code: 'PROJECT_SCOPE_VIOLATION',
+        details: {
+          agentId,
+          path: workspacePath,
+          allowedAgentPaths: [`/workspace-${agentId}`, '/memory'],
+          assignedProjectRoots,
+        },
+      },
+    };
+  };
   router.get('/workspace/files', requireAuth, async (req, res, next) => {
     try {
       const { path: inputPath = '/workspace', recursive = 'false' } = req.query;
@@ -130,6 +195,11 @@ function registerOpenClawWorkspaceRoutes({
         });
       }
 
+      const scopeViolation = await enforceWriteScope(req, workspacePath);
+      if (scopeViolation) {
+        return res.status(scopeViolation.status).json({ error: scopeViolation.error });
+      }
+
       try {
         await makeOpenClawRequest('GET', `/files/content?path=${encodeURIComponent(workspacePath)}`);
 
@@ -228,6 +298,11 @@ function registerOpenClawWorkspaceRoutes({
         });
       }
 
+      const scopeViolation = await enforceWriteScope(req, workspacePath);
+      if (scopeViolation) {
+        return res.status(scopeViolation.status).json({ error: scopeViolation.error });
+      }
+
       logger.info('Updating OpenClaw workspace file', {
         userId: req.user.id,
         path: workspacePath,
@@ -296,6 +371,11 @@ function registerOpenClawWorkspaceRoutes({
             code: 'INSUFFICIENT_PERMISSIONS',
           },
         });
+      }
+
+      const scopeViolation = await enforceWriteScope(req, workspacePath);
+      if (scopeViolation) {
+        return res.status(scopeViolation.status).json({ error: scopeViolation.error });
       }
 
       logger.info('Deleting OpenClaw workspace file', {

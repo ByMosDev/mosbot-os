@@ -72,9 +72,9 @@ const {
 const bcrypt = require('bcrypt');
 
 // Helper to get JWT token for a user
-function getToken(userId, role) {
+function getToken(userId, role, extraClaims = {}) {
   const jwtSecret = process.env.JWT_SECRET || 'test-only-jwt-secret-not-for-production';
-  return jwt.sign({ id: userId, role, email: `${role}@example.com` }, jwtSecret, {
+  return jwt.sign({ id: userId, role, email: `${role}@example.com`, ...extraClaims }, jwtSecret, {
     expiresIn: '1h',
   });
 }
@@ -425,6 +425,111 @@ describe('OpenClaw Routes', () => {
 
       expect(response.status).toBe(403);
       expect(response.body.error.code).toBe('INSUFFICIENT_PERMISSIONS');
+    });
+  });
+
+  describe('Workspace write scope guardrails', () => {
+    it('allows agent writes inside assigned project roots', async () => {
+      const token = getToken('agent-user', 'agent', { agent_id: 'cto' });
+
+      pool.query.mockImplementation((sql) => {
+        if (
+          String(sql).includes('FROM agent_project_assignments apa') &&
+          String(sql).includes('SELECT p.root_path')
+        ) {
+          return Promise.resolve({ rows: [{ root_path: '/projects/alpha' }] });
+        }
+        return Promise.resolve({ rows: [] });
+      });
+
+      let callCount = 0;
+      global.fetch = jest.fn().mockImplementation(async () => {
+        callCount += 1;
+        if (callCount === 1) {
+          return { ok: false, status: 404, text: async () => 'Not Found' };
+        }
+        return {
+          ok: true,
+          status: 201,
+          json: async () => ({ path: '/projects/alpha/new.md', created: true }),
+          text: async () => 'Created',
+        };
+      });
+
+      const response = await request(app)
+        .post('/api/v1/openclaw/workspace/files')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ path: '/projects/alpha/new.md', content: 'hello', encoding: 'utf8' });
+
+      expect(response.status).toBe(201);
+    });
+
+    it('blocks agent writes outside assigned project roots and private paths', async () => {
+      const token = getToken('agent-user', 'agent', { agent_id: 'cto' });
+
+      pool.query.mockImplementation((sql) => {
+        if (
+          String(sql).includes('FROM agent_project_assignments apa') &&
+          String(sql).includes('SELECT p.root_path')
+        ) {
+          return Promise.resolve({ rows: [{ root_path: '/projects/alpha' }] });
+        }
+        return Promise.resolve({ rows: [] });
+      });
+
+      global.fetch = jest.fn();
+
+      const response = await request(app)
+        .post('/api/v1/openclaw/workspace/files')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ path: '/projects/beta/new.md', content: 'hello', encoding: 'utf8' });
+
+      expect(response.status).toBe(403);
+      expect(response.body.error.code).toBe('PROJECT_SCOPE_VIOLATION');
+      expect(global.fetch).not.toHaveBeenCalled();
+    });
+
+    it('allows agent writes in agent-private workspace path', async () => {
+      const token = getToken('agent-user', 'agent', { agent_id: 'cto' });
+
+      global.fetch = jest.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({ path: '/workspace-cto/notes.md', updated: true }),
+        text: async () => 'OK',
+      });
+
+      const response = await request(app)
+        .put('/api/v1/openclaw/workspace/files')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ path: '/workspace-cto/notes.md', content: 'updated', encoding: 'utf8' });
+
+      expect(response.status).toBe(200);
+    });
+
+    it('allows admin writes outside project scope guardrails', async () => {
+      const token = getToken('admin-id', 'admin');
+
+      let callCount = 0;
+      global.fetch = jest.fn().mockImplementation(async () => {
+        callCount += 1;
+        if (callCount === 1) {
+          return { ok: false, status: 404, text: async () => 'Not Found' };
+        }
+        return {
+          ok: true,
+          status: 201,
+          json: async () => ({ path: '/projects/unassigned/admin.md', created: true }),
+          text: async () => 'Created',
+        };
+      });
+
+      const response = await request(app)
+        .post('/api/v1/openclaw/workspace/files')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ path: '/projects/unassigned/admin.md', content: 'hello', encoding: 'utf8' });
+
+      expect(response.status).toBe(201);
     });
   });
 
