@@ -90,6 +90,14 @@ const requireIntegrationReady = async (req, res, next) => {
   }
 };
 
+const requireIntegrationReadyForPrivilegedUser = (req, res, next) => {
+  if (!req.user || !['admin', 'owner'].includes(req.user.role)) {
+    return next();
+  }
+
+  return requireIntegrationReady(req, res, next);
+};
+
 function hashApiKey(rawKey) {
   return crypto.createHash('sha256').update(rawKey).digest('hex');
 }
@@ -1328,7 +1336,7 @@ registerOpenClawWorkspaceRoutes({
 router.use(
   ['/projects', '/sessions', '/cron-jobs', '/usage'],
   requireAuth,
-  requireIntegrationReady,
+  requireIntegrationReadyForPrivilegedUser,
 );
 
 // GET /api/v1/openclaw/projects

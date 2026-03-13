@@ -203,6 +203,20 @@ function mapPairingErrorToStatus(error) {
   return 'paired_missing_scopes';
 }
 
+function buildPairingSuccessPatch(connectMeta = {}, { lastCheckedAt } = {}) {
+  const grantedScopes = normalizeScopes(connectMeta?.auth?.scopes);
+  const rotatedDeviceToken =
+    typeof connectMeta?.auth?.deviceToken === 'string' ? connectMeta.auth.deviceToken.trim() : '';
+
+  return {
+    status: grantedScopes.length > 0 ? 'ready' : 'paired_missing_scopes',
+    granted_scopes: grantedScopes,
+    ...(rotatedDeviceToken ? { device_token: serializeStoredSecret(rotatedDeviceToken) } : {}),
+    last_error: grantedScopes.length > 0 ? null : 'gateway connect response did not include granted scopes',
+    last_checked_at: lastCheckedAt || new Date().toISOString(),
+  };
+}
+
 function buildStatusFromRow(row = null) {
   if (!row) {
     return {
@@ -326,20 +340,7 @@ async function runStartPairing() {
       },
     );
 
-    const grantedScopes = normalizeScopes(connectMeta?.auth?.scopes);
-    const rotatedDeviceToken =
-      typeof connectMeta?.auth?.deviceToken === 'string'
-        ? connectMeta.auth.deviceToken.trim()
-        : '';
-
-    // If it succeeds immediately, we can mark ready.
-    await upsertIntegrationRow({
-      status: 'ready',
-      granted_scopes: grantedScopes.length > 0 ? grantedScopes : REQUIRED_OPERATOR_SCOPES,
-      ...(rotatedDeviceToken ? { device_token: serializeStoredSecret(rotatedDeviceToken) } : {}),
-      last_error: null,
-      last_checked_at: new Date().toISOString(),
-    });
+    await upsertIntegrationRow(buildPairingSuccessPatch(connectMeta, { lastCheckedAt: new Date().toISOString() }));
   } catch (error) {
     await upsertIntegrationRow({
       status: mapPairingErrorToStatus(error),
@@ -387,19 +388,7 @@ async function finalizePairing() {
       },
     );
 
-    const grantedScopes = normalizeScopes(connectMeta?.auth?.scopes);
-    const rotatedDeviceToken =
-      typeof connectMeta?.auth?.deviceToken === 'string'
-        ? connectMeta.auth.deviceToken.trim()
-        : '';
-
-    await upsertIntegrationRow({
-      status: 'ready',
-      granted_scopes: grantedScopes.length > 0 ? grantedScopes : REQUIRED_OPERATOR_SCOPES,
-      ...(rotatedDeviceToken ? { device_token: serializeStoredSecret(rotatedDeviceToken) } : {}),
-      last_error: null,
-      last_checked_at: new Date().toISOString(),
-    });
+    await upsertIntegrationRow(buildPairingSuccessPatch(connectMeta, { lastCheckedAt: new Date().toISOString() }));
   } catch (error) {
     await upsertIntegrationRow({
       status: mapPairingErrorToStatus(error),

@@ -12,6 +12,7 @@ const {
   getIntegrationStatus,
   assertIntegrationReady,
   startPairing,
+  finalizePairing,
 } = require('../openclawIntegrationService');
 
 describe('openclawIntegrationService', () => {
@@ -174,6 +175,156 @@ describe('openclawIntegrationService', () => {
 
       expect(first).toEqual(second);
       expect(gatewayWsRpc).toHaveBeenCalledTimes(1);
+    });
+
+    it('keeps pairing non-ready when gateway omits granted scopes', async () => {
+      let integrationRow = null;
+      pool.query.mockImplementation(async (sql, params) => {
+        if (sql.includes('SELECT * FROM openclaw_integration_state WHERE id = 1')) {
+          return { rows: integrationRow ? [integrationRow] : [] };
+        }
+
+        if (sql.includes('INSERT INTO openclaw_integration_state')) {
+          integrationRow = {
+            ...(integrationRow || {}),
+            id: params[0],
+            status: params[1],
+            gateway_url: params[2],
+            device_id: params[3],
+            client_id: params[4],
+            client_mode: params[5],
+            platform: params[6],
+            public_key: params[7],
+            private_key: params[8],
+            device_token: params[9],
+            granted_scopes: JSON.parse(params[10]),
+            last_error: params[11],
+            last_checked_at: params[12],
+          };
+          return { rows: [] };
+        }
+
+        if (sql.includes('FROM openclaw_integration_state') && sql.includes('granted_scopes')) {
+          return {
+            rows: integrationRow
+              ? [
+                  {
+                    status: integrationRow.status,
+                    granted_scopes: integrationRow.granted_scopes || [],
+                    gateway_url: integrationRow.gateway_url,
+                    device_id: integrationRow.device_id,
+                    client_id: integrationRow.client_id,
+                    client_mode: integrationRow.client_mode,
+                    platform: integrationRow.platform,
+                    last_error: integrationRow.last_error,
+                    last_checked_at: integrationRow.last_checked_at,
+                    updated_at: integrationRow.last_checked_at,
+                  },
+                ]
+              : [],
+          };
+        }
+
+        throw new Error(`Unexpected SQL in test: ${sql}`);
+      });
+
+      gatewayWsRpc.mockResolvedValueOnce({
+        auth: {
+          deviceToken: 'rotated-token',
+        },
+      });
+
+      const status = await startPairing();
+
+      expect(status.ready).toBe(false);
+      expect(status.status).toBe('paired_missing_scopes');
+      expect(status.grantedScopes).toEqual([]);
+      expect(status.missingScopes).toEqual(REQUIRED_OPERATOR_SCOPES);
+    });
+  });
+
+  describe('finalizePairing', () => {
+    it('keeps pairing non-ready when finalize succeeds without granted scopes', async () => {
+      const crypto = require('crypto');
+      const keyPair = crypto.generateKeyPairSync('ed25519');
+      const privateKeyDer = keyPair.privateKey.export({ format: 'der', type: 'pkcs8' });
+      const privateSeed = Buffer.from(privateKeyDer).subarray(-32).toString('base64url');
+
+      let integrationRow = {
+        id: 1,
+        status: 'pending_pairing',
+        gateway_url: 'http://openclaw-gateway:18789',
+        device_id: 'device-1',
+        client_id: 'openclaw-control-ui',
+        client_mode: 'webchat',
+        platform: 'linux',
+        public_key: 'public-1',
+        private_key: privateSeed,
+        device_token: 'token-1',
+        granted_scopes: [],
+        last_error: null,
+        last_checked_at: null,
+      };
+
+      pool.query.mockImplementation(async (sql, params) => {
+        if (sql.includes('SELECT * FROM openclaw_integration_state WHERE id = 1')) {
+          return { rows: [integrationRow] };
+        }
+
+        if (sql.includes('INSERT INTO openclaw_integration_state')) {
+          integrationRow = {
+            ...integrationRow,
+            id: params[0],
+            status: params[1],
+            gateway_url: params[2],
+            device_id: params[3],
+            client_id: params[4],
+            client_mode: params[5],
+            platform: params[6],
+            public_key: params[7],
+            private_key: params[8],
+            device_token: params[9],
+            granted_scopes: JSON.parse(params[10]),
+            last_error: params[11],
+            last_checked_at: params[12],
+          };
+          return { rows: [] };
+        }
+
+        if (sql.includes('FROM openclaw_integration_state') && sql.includes('granted_scopes')) {
+          return {
+            rows: [
+              {
+                status: integrationRow.status,
+                granted_scopes: integrationRow.granted_scopes || [],
+                gateway_url: integrationRow.gateway_url,
+                device_id: integrationRow.device_id,
+                client_id: integrationRow.client_id,
+                client_mode: integrationRow.client_mode,
+                platform: integrationRow.platform,
+                last_error: integrationRow.last_error,
+                last_checked_at: integrationRow.last_checked_at,
+                updated_at: integrationRow.last_checked_at,
+              },
+            ],
+          };
+        }
+
+        throw new Error(`Unexpected SQL in test: ${sql}`);
+      });
+
+      gatewayWsRpc.mockResolvedValueOnce({
+        auth: {
+          deviceToken: 'rotated-token',
+        },
+      });
+
+      const status = await finalizePairing();
+
+      expect(status.ready).toBe(false);
+      expect(status.status).toBe('paired_missing_scopes');
+      expect(status.grantedScopes).toEqual([]);
+      expect(status.missingScopes).toEqual(REQUIRED_OPERATOR_SCOPES);
     });
   });
 });
