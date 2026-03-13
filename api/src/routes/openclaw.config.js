@@ -8,6 +8,8 @@ const {
 const {
   getIntegrationStatus,
   assertIntegrationReady,
+  startPairing,
+  finalizePairing,
 } = require('../services/openclawIntegrationService');
 
 function requireOwnerOrAdmin(req, res, next) {
@@ -58,6 +60,29 @@ function registerOpenClawConfigRoutes({ router, requireAuth }) {
       handleKnownConfigError(error, res, next);
     }
   });
+
+  router.post('/integration/pairing/start', requireAuth, requireOwnerOrAdmin, async (req, res, next) => {
+    try {
+      const data = await startPairing();
+      res.status(201).json({ data });
+    } catch (error) {
+      handleKnownConfigError(error, res, next);
+    }
+  });
+
+  router.post(
+    '/integration/pairing/finalize',
+    requireAuth,
+    requireOwnerOrAdmin,
+    async (req, res, next) => {
+      try {
+        const data = await finalizePairing();
+        res.json({ data });
+      } catch (error) {
+        handleKnownConfigError(error, res, next);
+      }
+    },
+  );
 
   router.get('/config', requireAuth, requireOwnerOrAdmin, async (req, res, next) => {
     try {

@@ -1,11 +1,17 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { ArrowPathIcon, ExclamationTriangleIcon, ShieldCheckIcon } from '@heroicons/react/24/outline';
-import { getOpenClawIntegrationStatus } from '../api/client';
+import {
+  finalizeOpenClawPairing,
+  getOpenClawIntegrationStatus,
+  startOpenClawPairing,
+} from '../api/client';
 
 export default function OpenClawPairingSetup() {
   const [status, setStatus] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [isStarting, setIsStarting] = useState(false);
+  const [isFinalizing, setIsFinalizing] = useState(false);
   const [error, setError] = useState('');
 
   const loadStatus = async () => {
@@ -24,6 +30,32 @@ export default function OpenClawPairingSetup() {
   useEffect(() => {
     loadStatus();
   }, []);
+
+  const handleStartPairing = async () => {
+    setIsStarting(true);
+    setError('');
+    try {
+      const data = await startOpenClawPairing();
+      setStatus(data);
+    } catch (err) {
+      setError(err?.response?.data?.error?.message || err.message || 'Failed to start pairing');
+    } finally {
+      setIsStarting(false);
+    }
+  };
+
+  const handleFinalizePairing = async () => {
+    setIsFinalizing(true);
+    setError('');
+    try {
+      const data = await finalizeOpenClawPairing();
+      setStatus(data);
+    } catch (err) {
+      setError(err?.response?.data?.error?.message || err.message || 'Failed to finalize pairing');
+    } finally {
+      setIsFinalizing(false);
+    }
+  };
 
   const missingScopes = status?.missingScopes || [];
 
@@ -100,9 +132,24 @@ export default function OpenClawPairingSetup() {
         )}
       </div>
 
-      <div className="text-sm text-dark-400">
-        Wizard actions (start pairing, approve flow, finalize) are being wired in this branch.
-        For now, complete pairing from the operator side and refresh this page.
+      <div className="card p-4 space-y-3">
+        <div className="text-sm text-dark-300">
+          Pairing flow:
+          <ol className="list-decimal ml-5 mt-1 space-y-1 text-dark-400">
+            <li>Start pairing to generate MosBot device identity + pending request.</li>
+            <li>Approve the request in OpenClaw operator controls.</li>
+            <li>Finalize pairing to verify scopes and unlock MosBot UI.</li>
+          </ol>
+        </div>
+
+        <div className="flex flex-wrap gap-2">
+          <button className="btn-primary" onClick={handleStartPairing} disabled={isStarting}>
+            {isStarting ? 'Starting…' : 'Start pairing'}
+          </button>
+          <button className="btn-secondary" onClick={handleFinalizePairing} disabled={isFinalizing}>
+            {isFinalizing ? 'Finalizing…' : 'Finalize pairing'}
+          </button>
+        </div>
       </div>
 
       {status?.ready && (

@@ -402,6 +402,20 @@ export const getOpenClawIntegrationStatus = async () => {
   return response.data.data;
 };
 
+export const startOpenClawPairing = async () => {
+  const response = await api.post('/openclaw/integration/pairing/start', {}, { timeout: OPENCLAW_TIMEOUT });
+  return response.data.data;
+};
+
+export const finalizeOpenClawPairing = async () => {
+  const response = await api.post(
+    '/openclaw/integration/pairing/finalize',
+    {},
+    { timeout: OPENCLAW_TIMEOUT },
+  );
+  return response.data.data;
+};
+
 export const getOpenClawConfig = async () => {
   const response = await api.get('/openclaw/config', { timeout: OPENCLAW_TIMEOUT });
   return response.data.data;

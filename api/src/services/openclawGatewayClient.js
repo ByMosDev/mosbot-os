@@ -44,11 +44,14 @@ const DEVICE_SCOPES = [
 
 function buildDeviceConnectPayload(deviceAuth, nonce) {
   const signedAt = Date.now();
+  const clientId = deviceAuth.clientId || DEVICE_CLIENT_ID;
+  const clientMode = deviceAuth.clientMode || DEVICE_CLIENT_MODE;
+  const clientPlatform = deviceAuth.platform || process.platform || 'node';
   const canonical = [
     'v2',
     deviceAuth.deviceId,
-    DEVICE_CLIENT_ID,
-    DEVICE_CLIENT_MODE,
+    clientId,
+    clientMode,
     DEVICE_ROLE,
     DEVICE_SCOPES.join(','),
     String(signedAt),
@@ -62,10 +65,10 @@ function buildDeviceConnectPayload(deviceAuth, nonce) {
     minProtocol: 3,
     maxProtocol: 3,
     client: {
-      id: DEVICE_CLIENT_ID,
+      id: clientId,
       version: 'server',
-      platform: 'node',
-      mode: DEVICE_CLIENT_MODE,
+      platform: clientPlatform,
+      mode: clientMode,
     },
     role: DEVICE_ROLE,
     scopes: DEVICE_SCOPES,
@@ -599,10 +602,10 @@ async function sessionsListAllViaWs({
  * @param {object} params  RPC method params
  * @returns {Promise<object>} The RPC payload
  */
-async function gatewayWsRpcWithDeviceAuth(method, params = {}) {
+async function gatewayWsRpcWithDeviceAuth(method, params = {}, options = {}) {
   const gatewayUrl = config.openclaw.gatewayUrl;
   const gatewayToken = config.openclaw.gatewayToken;
-  const deviceAuth = getDeviceAuthConfig();
+  const deviceAuth = options.deviceAuth || getDeviceAuthConfig();
 
   if (!gatewayUrl) {
     const err = new Error(
@@ -616,7 +619,14 @@ async function gatewayWsRpcWithDeviceAuth(method, params = {}) {
   // When device auth is not configured, fall back to shared gateway auth using
   // a backend client identity (not Control UI). Control UI identities are
   // intentionally restricted to local/pairing-safe contexts.
-  const useInsecureAuth = !deviceAuth;
+  const useInsecureAuth = !deviceAuth && !options.requireDeviceAuth;
+  if (options.requireDeviceAuth && !deviceAuth) {
+    const err = new Error('Device auth is required but no device credentials were provided');
+    err.status = 503;
+    err.code = 'DEVICE_AUTH_REQUIRED';
+    throw err;
+  }
+
   if (useInsecureAuth) {
     logger.debug('Device auth not configured — using shared gateway auth fallback');
   }

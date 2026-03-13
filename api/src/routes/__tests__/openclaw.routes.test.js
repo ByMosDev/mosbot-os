@@ -60,6 +60,8 @@ jest.mock('../../services/openclawIntegrationService', () => ({
   ],
   getIntegrationStatus: jest.fn(),
   assertIntegrationReady: jest.fn(),
+  startPairing: jest.fn(),
+  finalizePairing: jest.fn(),
 }));
 
 const request = require('supertest');
@@ -84,6 +86,8 @@ const {
 const {
   getIntegrationStatus,
   assertIntegrationReady,
+  startPairing,
+  finalizePairing,
 } = require('../../services/openclawIntegrationService');
 const bcrypt = require('bcrypt');
 
@@ -154,6 +158,8 @@ describe('OpenClaw Routes', () => {
       missingScopes: [],
     });
     assertIntegrationReady.mockResolvedValue({ ready: true });
+    startPairing.mockResolvedValue({ status: 'pending_pairing', ready: false });
+    finalizePairing.mockResolvedValue({ status: 'ready', ready: true });
     sessionsListAllViaWs.mockResolvedValue([]);
     sessionsHistory.mockResolvedValue({ messages: [] });
     upsertSessionUsageBatch.mockResolvedValue(undefined);
@@ -2889,6 +2895,36 @@ describe('OpenClaw Routes', () => {
           ready: false,
         }),
       );
+    });
+  });
+
+  describe('POST /api/v1/openclaw/integration/pairing/start', () => {
+    it('starts pairing for admin/owner users', async () => {
+      const token = getToken('admin-id', 'admin');
+      startPairing.mockResolvedValueOnce({ status: 'pending_pairing', ready: false });
+
+      const response = await request(app)
+        .post('/api/v1/openclaw/integration/pairing/start')
+        .set('Authorization', `Bearer ${token}`)
+        .send({});
+
+      expect(response.status).toBe(201);
+      expect(response.body.data).toEqual(expect.objectContaining({ status: 'pending_pairing' }));
+    });
+  });
+
+  describe('POST /api/v1/openclaw/integration/pairing/finalize', () => {
+    it('finalizes pairing for admin/owner users', async () => {
+      const token = getToken('owner-id', 'owner');
+      finalizePairing.mockResolvedValueOnce({ status: 'ready', ready: true });
+
+      const response = await request(app)
+        .post('/api/v1/openclaw/integration/pairing/finalize')
+        .set('Authorization', `Bearer ${token}`)
+        .send({});
+
+      expect(response.status).toBe(200);
+      expect(response.body.data).toEqual(expect.objectContaining({ status: 'ready', ready: true }));
     });
   });
 
