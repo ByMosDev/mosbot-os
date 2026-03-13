@@ -8,7 +8,6 @@ const logger = require('./utils/logger');
 const { startSessionUsagePoller } = require('./services/sessionUsageService');
 const { startPricingRefreshJob } = require('./services/modelPricingService');
 const { startActivityIngestionPollers } = require('./services/activityIngestionService');
-const { warnIfDeviceAuthNotConfigured } = require('./services/openclawGatewayClient');
 const { reconcileDocsLinksOnStartup } = require('./services/docsLinkReconciliationService');
 const { startAgentReconcileJob } = require('./services/agentReconciliationService');
 
@@ -106,7 +105,6 @@ async function start() {
       environment: config.nodeEnv,
       healthCheck: `http://localhost:${config.port}/health`,
     });
-    warnIfDeviceAuthNotConfigured();
   });
 
   // System-triggered docs link reconciliation (non-fatal):

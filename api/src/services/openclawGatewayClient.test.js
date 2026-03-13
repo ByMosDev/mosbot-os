@@ -67,10 +67,6 @@ describe('openclawGatewayClient device auth requirement', () => {
     process.env = { ...originalEnv };
     process.env.OPENCLAW_GATEWAY_URL = 'http://localhost:5173';
     process.env.OPENCLAW_GATEWAY_TOKEN = 'test-token';
-    delete process.env.OPENCLAW_DEVICE_ID;
-    delete process.env.OPENCLAW_DEVICE_PUBLIC_KEY;
-    delete process.env.OPENCLAW_DEVICE_PRIVATE_KEY;
-    delete process.env.OPENCLAW_DEVICE_TOKEN;
     MockWebSocket.instances.length = 0;
   });
 

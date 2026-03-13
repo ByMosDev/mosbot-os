@@ -15,9 +15,6 @@ jest.mock('../services/modelPricingService', () => ({
 jest.mock('../services/activityIngestionService', () => ({
   startActivityIngestionPollers: jest.fn(),
 }));
-jest.mock('../services/openclawGatewayClient', () => ({
-  warnIfDeviceAuthNotConfigured: jest.fn(),
-}));
 jest.mock('../services/docsLinkReconciliationService', () => ({
   reconcileDocsLinksOnStartup: jest.fn().mockResolvedValue({
     main: { action: 'unchanged' },

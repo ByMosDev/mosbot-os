@@ -35,17 +35,6 @@ function privateKeyFromStoredMaterial(material) {
   }
 }
 
-function getDeviceAuthConfig() {
-  const deviceId = config.openclaw.device.id;
-  const publicKey = config.openclaw.device.publicKey;
-  const privateKeyRaw = config.openclaw.device.privateKey;
-  const deviceToken = config.openclaw.device.token;
-  if (!deviceId || !publicKey || !privateKeyRaw || !deviceToken) return null;
-  const privateKey = privateKeyFromStoredMaterial(privateKeyRaw);
-  if (!privateKey) return null;
-  return { deviceId, publicKey, privateKey, deviceToken };
-}
-
 async function getDeviceAuthConfigFromDb() {
   const now = Date.now();
   if (deviceAuthDbCache.expiresAt > now) {
@@ -99,8 +88,6 @@ async function getDeviceAuthConfigFromDb() {
 
 function resolveDeviceAuthConfig(options = {}) {
   if (options.deviceAuth) return options.deviceAuth;
-  const envDeviceAuth = getDeviceAuthConfig();
-  if (envDeviceAuth) return envDeviceAuth;
   if (process.env.JEST_WORKER_ID !== undefined) return null;
   return getDeviceAuthConfigFromDb();
 }
@@ -901,41 +888,7 @@ function extractJobsArray(data) {
   return [];
 }
 
-/**
- * Log a startup warning if device auth env vars are not configured.
- * Call once during server startup so operators know immediately rather than
- * discovering the missing config at first request.
- */
-function warnIfDeviceAuthNotConfigured() {
-  const gatewayUrl = config.openclaw.gatewayUrl;
-
-  if (!gatewayUrl) {
-    // Gateway not configured at all — this is expected in some environments
-    return;
-  }
-
-  const missing = [];
-  if (!config.openclaw.device.id) missing.push('OPENCLAW_DEVICE_ID');
-  if (!config.openclaw.device.publicKey) missing.push('OPENCLAW_DEVICE_PUBLIC_KEY');
-  if (!config.openclaw.device.privateKey) missing.push('OPENCLAW_DEVICE_PRIVATE_KEY');
-  if (!config.openclaw.device.token) missing.push('OPENCLAW_DEVICE_TOKEN');
-
-  if (missing.length > 0) {
-    logger.info(
-      'OpenClaw device auth not configured in env vars — DB-paired device credentials are required for gateway RPCs',
-      {
-        missingVars: missing,
-      },
-    );
-  } else {
-    logger.info('OpenClaw device auth configured', {
-      deviceId: config.openclaw.device.id,
-    });
-  }
-}
-
 module.exports = {
-  getDeviceAuthConfig,
   buildDeviceConnectPayload,
   invokeTool,
   sessionsList,
@@ -948,5 +901,4 @@ module.exports = {
   sleep,
   isRetryableError,
   makeOpenClawGatewayRequest,
-  warnIfDeviceAuthNotConfigured,
 };

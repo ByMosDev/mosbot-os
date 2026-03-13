@@ -96,46 +96,6 @@ describe('config', () => {
       expect(config.openclaw.gatewayToken).toBeNull();
     });
 
-    it('should return device.id from env var', () => {
-      process.env.OPENCLAW_DEVICE_ID = 'device-123';
-      expect(config.openclaw.device.id).toBe('device-123');
-    });
-
-    it('should return null when device.id is not set', () => {
-      delete process.env.OPENCLAW_DEVICE_ID;
-      expect(config.openclaw.device.id).toBeNull();
-    });
-
-    it('should return device.publicKey from env var', () => {
-      process.env.OPENCLAW_DEVICE_PUBLIC_KEY = 'public-key';
-      expect(config.openclaw.device.publicKey).toBe('public-key');
-    });
-
-    it('should return null when device.publicKey is not set', () => {
-      delete process.env.OPENCLAW_DEVICE_PUBLIC_KEY;
-      expect(config.openclaw.device.publicKey).toBeNull();
-    });
-
-    it('should return device.privateKey from env var', () => {
-      process.env.OPENCLAW_DEVICE_PRIVATE_KEY = 'private-key';
-      expect(config.openclaw.device.privateKey).toBe('private-key');
-    });
-
-    it('should return null when device.privateKey is not set', () => {
-      delete process.env.OPENCLAW_DEVICE_PRIVATE_KEY;
-      expect(config.openclaw.device.privateKey).toBeNull();
-    });
-
-    it('should return device.token from env var', () => {
-      process.env.OPENCLAW_DEVICE_TOKEN = 'device-token';
-      expect(config.openclaw.device.token).toBe('device-token');
-    });
-
-    it('should return null when device.token is not set', () => {
-      delete process.env.OPENCLAW_DEVICE_TOKEN;
-      expect(config.openclaw.device.token).toBeNull();
-    });
-
     it('should return workspaceToken from env var', () => {
       process.env.OPENCLAW_WORKSPACE_TOKEN = 'workspace-token';
       expect(config.openclaw.workspaceToken).toBe('workspace-token');

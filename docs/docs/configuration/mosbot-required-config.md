@@ -276,18 +276,6 @@ OPENCLAW_GATEWAY_TOKEN=your-gateway-token
 2. Return to MosBot and click `Finalize pairing`
 3. Confirm the integration status is `ready`
 
-### Manual device credentials (advanced)
-
-MosBot can also use pre-provisioned device auth credentials when you intentionally manage them
-outside the dashboard flow:
-
-```bash
-OPENCLAW_DEVICE_ID=your-device-id
-OPENCLAW_DEVICE_PUBLIC_KEY=your-ed25519-public-key-base64url
-OPENCLAW_DEVICE_PRIVATE_KEY=your-ed25519-private-key-base64url
-OPENCLAW_DEVICE_TOKEN=your-device-token
-```
-
 ---
 
 ## Minimal openclaw.json for MosBot

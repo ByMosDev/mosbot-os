@@ -95,20 +95,9 @@ variables, gateway-backed features remain unavailable.
 
 ## OpenClaw Device Auth
 
-Used for full session access with `operator.read`/`operator.write` scopes. These values are
-normally generated and persisted by MosBot's dashboard pairing flow. In most deployments you do not
-need to set them manually.
-
-| Variable                      | Description                                                                               |
-| ----------------------------- | ----------------------------------------------------------------------------------------- |
-| `OPENCLAW_DEVICE_ID`          | Device identifier from the pairing flow                                                   |
-| `OPENCLAW_DEVICE_PUBLIC_KEY`  | Ed25519 public key (base64url encoded). Generated during OpenClaw device pairing process. |
-| `OPENCLAW_DEVICE_PRIVATE_KEY` | Ed25519 private key (base64url encoded)                                                   |
-| `OPENCLAW_DEVICE_TOKEN`       | Device pairing token                                                                      |
-
-After setting `OPENCLAW_GATEWAY_URL` and `OPENCLAW_GATEWAY_TOKEN`, sign in as an `owner` or
-`admin`, open `Settings -> OpenClaw Pairing`, then complete `Start pairing` and `Finalize
-pairing`.
+MosBot now manages device auth through the dashboard pairing workflow. After setting
+`OPENCLAW_GATEWAY_URL` and `OPENCLAW_GATEWAY_TOKEN`, sign in as an `owner` or `admin`, open
+`Settings -> OpenClaw Pairing`, then complete `Start pairing` and `Finalize pairing`.
 
 ## Subagent runtime files
 

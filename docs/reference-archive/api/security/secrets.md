@@ -24,8 +24,6 @@ Copy `.env.example` to `.env` and fill in all required values before starting th
 | `BOOTSTRAP_OWNER_PASSWORD` | First run | Password for the initial owner account (min 12 chars) |
 | `OPENCLAW_WORKSPACE_TOKEN` | If using OpenClaw | Bearer token for the workspace service |
 | `OPENCLAW_GATEWAY_TOKEN` | If using OpenClaw | Bearer token for the gateway service |
-| `OPENCLAW_DEVICE_PRIVATE_KEY` | If using device auth | Ed25519 private key (base64url) |
-| `OPENCLAW_DEVICE_TOKEN` | If using device auth | Device pairing token |
 
 See `.env.example` for the full list with descriptions and defaults.
 

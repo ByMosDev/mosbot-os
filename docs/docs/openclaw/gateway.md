@@ -87,18 +87,6 @@ dashboard before session data and runtime control become available.
 
 MosBot persists the paired device identity after the workflow completes.
 
-### Manual device credentials (advanced)
-
-If you need to pre-provision device auth instead of pairing through the dashboard, MosBot can still
-read these environment variables:
-
-```bash
-OPENCLAW_DEVICE_ID=your-device-id
-OPENCLAW_DEVICE_PUBLIC_KEY=your-ed25519-public-key-base64url
-OPENCLAW_DEVICE_PRIVATE_KEY=your-ed25519-private-key-base64url
-OPENCLAW_DEVICE_TOKEN=your-device-token
-```
-
 ## Verifying gateway connectivity
 
 ```bash
