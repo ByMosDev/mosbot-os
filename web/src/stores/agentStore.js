@@ -20,6 +20,7 @@ const hasArchivedWorkspace = async () => {
         path: archivedAgent.workspaceRootPath,
         recursive: 'false',
       },
+      __suppressErrorStatuses: [404],
     });
     return true;
   } catch (error) {
