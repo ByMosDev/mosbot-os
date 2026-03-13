@@ -1,7 +1,6 @@
 const crypto = require('crypto');
 const pool = require('../db/pool');
 const config = require('../config');
-const { getJwtSecret } = require('../utils/jwt');
 const { gatewayWsRpc } = require('./openclawGatewayClient');
 
 const REQUIRED_OPERATOR_SCOPES = [
@@ -35,38 +34,14 @@ function normalizeScopes(rawScopes) {
   return [];
 }
 
-function deriveEncryptionKey() {
-  const secret = getJwtSecret();
-  return crypto.createHash('sha256').update(String(secret)).digest();
-}
-
 function encryptSecret(plaintext) {
   if (!plaintext) return null;
-  const key = deriveEncryptionKey();
-  const iv = crypto.randomBytes(12);
-  const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
-  const ciphertext = Buffer.concat([cipher.update(String(plaintext), 'utf8'), cipher.final()]);
-  const tag = cipher.getAuthTag();
-  return `${iv.toString('base64url')}.${tag.toString('base64url')}.${ciphertext.toString('base64url')}`;
+  return String(plaintext);
 }
 
 function decryptSecret(payload) {
   if (!payload) return null;
-  const [ivB64, tagB64, dataB64] = String(payload).split('.');
-  if (!ivB64 || !tagB64 || !dataB64) return null;
-
-  const key = deriveEncryptionKey();
-  const decipher = crypto.createDecipheriv(
-    'aes-256-gcm',
-    key,
-    Buffer.from(ivB64, 'base64url'),
-  );
-  decipher.setAuthTag(Buffer.from(tagB64, 'base64url'));
-  const plaintext = Buffer.concat([
-    decipher.update(Buffer.from(dataB64, 'base64url')),
-    decipher.final(),
-  ]);
-  return plaintext.toString('utf8');
+  return String(payload);
 }
 
 function privateKeyFromSeedB64(seedB64) {
