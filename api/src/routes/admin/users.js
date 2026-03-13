@@ -45,9 +45,6 @@ router.get('/', async (req, res, next) => {
     const total = parseInt(countResult.rows[0].total, 10);
     let users = dataResult.rows;
 
-    // includeAgentConfig is retained as a no-op for backwards compatibility.
-    // Agent configuration is managed via /api/v1/admin/agents.
-
     res.json({
       data: users,
       pagination: {
@@ -76,9 +73,6 @@ router.get('/:id', validateUUID('id'), async (req, res, next) => {
     }
 
     let user = result.rows[0];
-
-    // includeAgentConfig is retained as a no-op for backwards compatibility.
-    // Agent configuration is managed via /api/v1/admin/agents.
 
     res.json({ data: user });
   } catch (error) {

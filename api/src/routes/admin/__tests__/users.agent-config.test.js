@@ -63,22 +63,22 @@ describe('admin users legacy-agent cutover behavior', () => {
     app = makeApp();
   });
 
-  it('GET / ignores includeAgentConfig and does not query OpenClaw config', async () => {
+  it('GET / does not query OpenClaw config for user listing', async () => {
     pool.query.mockResolvedValueOnce({ rows: [{ total: '1' }] }).mockResolvedValueOnce({
       rows: [{ id: 'u2', role: 'admin' }],
     });
 
-    const res = await request(app).get('/api/v1/admin/users?includeAgentConfig=true');
+    const res = await request(app).get('/api/v1/admin/users');
     expect(res.status).toBe(200);
     expect(res.body.data[0].agentConfig).toBeUndefined();
     expect(makeOpenClawRequest).not.toHaveBeenCalled();
   });
 
-  it('GET /:id ignores includeAgentConfig and does not query OpenClaw config', async () => {
+  it('GET /:id does not query OpenClaw config for user detail', async () => {
     const id = '550e8400-e29b-41d4-a716-446655440000';
     pool.query.mockResolvedValueOnce({ rows: [{ id, role: 'admin' }] });
 
-    const res = await request(app).get(`/api/v1/admin/users/${id}?includeAgentConfig=true`);
+    const res = await request(app).get(`/api/v1/admin/users/${id}`);
     expect(res.status).toBe(200);
     expect(res.body.data.agentConfig).toBeUndefined();
     expect(makeOpenClawRequest).not.toHaveBeenCalled();
