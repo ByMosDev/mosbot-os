@@ -751,7 +751,7 @@ async function gatewayWsRpcWithDeviceAuth(method, params = {}, options = {}) {
     const WebSocket = require('ws');
     const parsedUrl = new URL(wsUrl.replace(/^ws/, 'http'));
     const originHost = parsedUrl.host; // e.g. "openclaw.openclaw-personal.svc.cluster.local:18789"
-    const originScheme = wsUrl.startsWith('wss://') ? 'https' : 'https';
+    const originScheme = wsUrl.startsWith('wss://') ? 'https' : 'http';
     const ws = new WebSocket(wsUrl, {
       headers: {
         ...(gatewayToken ? { Authorization: `Bearer ${gatewayToken}` } : {}),

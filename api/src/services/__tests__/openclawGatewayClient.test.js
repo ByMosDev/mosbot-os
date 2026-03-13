@@ -1308,6 +1308,29 @@ Line 2"}`;
       });
     });
 
+    it('should send an http Origin header for ws gateway URLs', async () => {
+      jest.useRealTimers();
+      const WebSocket = require('ws');
+
+      const promise = sessionsListAllViaWs();
+
+      expect(WebSocket).toHaveBeenCalledWith(
+        'ws://test-gateway:18789',
+        expect.objectContaining({
+          headers: expect.objectContaining({
+            Origin: 'http://test-gateway:18789',
+            Host: 'test-gateway:18789',
+          }),
+        }),
+      );
+
+      emitWs('error', new Error('connection failed'));
+      await expect(promise).rejects.toMatchObject({
+        status: 503,
+        code: 'SERVICE_UNAVAILABLE',
+      });
+    });
+
     it('should reject pending requests when websocket closes early', async () => {
       jest.useRealTimers(); // Use real timers for WebSocket tests
       mockWebSocket.send.mockImplementation(() => {
