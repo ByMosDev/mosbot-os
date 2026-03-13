@@ -60,7 +60,7 @@ jest.mock('ws', () => {
 const MockWebSocket = require('ws');
 const { gatewayWsRpc } = require('./openclawGatewayClient');
 
-describe('openclawGatewayClient insecure fallback handshake', () => {
+describe('openclawGatewayClient device auth requirement', () => {
   const originalEnv = process.env;
 
   beforeEach(() => {
@@ -78,18 +78,12 @@ describe('openclawGatewayClient insecure fallback handshake', () => {
     process.env = originalEnv;
   });
 
-  it('uses backend client identity (not control-ui) when device auth env vars are missing', async () => {
-    const result = await gatewayWsRpc('config.get', {});
+  it('rejects when device auth env vars are missing', async () => {
+    await expect(gatewayWsRpc('config.get', {})).rejects.toMatchObject({
+      status: 503,
+      code: 'DEVICE_AUTH_REQUIRED',
+    });
 
-    expect(result).toEqual({ raw: '{"ok":true}', hash: 'abc123' });
-    expect(MockWebSocket.instances).toHaveLength(1);
-
-    const ws = MockWebSocket.instances[0];
-    const connectReq = ws.sent.find((msg) => msg.method === 'connect');
-
-    expect(connectReq).toBeDefined();
-    expect(connectReq.params.client.id).toBe('gateway-client');
-    expect(connectReq.params.client.mode).toBe('backend');
-    expect(connectReq.params.client.id).not.toBe('openclaw-control-ui');
+    expect(require('ws').instances).toHaveLength(0);
   });
 });
