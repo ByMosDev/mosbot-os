@@ -1325,8 +1325,7 @@ registerOpenClawWorkspaceRoutes({
 
 // Wizard-first pairing gate: lock OpenClaw-dependent routes until integration is ready.
 router.use(
-  ['/projects', '/agents', '/sessions', '/cron-jobs', '/usage', '/subagents', '/config'],
-  requireAuth,
+  ['/projects', '/agents', '/sessions', '/cron-jobs', '/usage', '/subagents'],
   requireIntegrationReady,
 );
 

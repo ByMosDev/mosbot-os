@@ -157,6 +157,27 @@ async function upsertIntegrationRow(patch) {
   );
 }
 
+function mapPairingErrorToStatus(error) {
+  const rpcCode = String(error?.rpcCode || error?.code || '').toUpperCase();
+  const message = String(error?.message || '').toLowerCase();
+
+  if (rpcCode === 'NOT_PAIRED' || message.includes('not paired')) {
+    return 'pending_pairing';
+  }
+
+  if (
+    rpcCode === 'SERVICE_TIMEOUT' ||
+    rpcCode === 'SERVICE_NOT_CONFIGURED' ||
+    rpcCode === 'GATEWAY_UNREACHABLE' ||
+    message.includes('timed out') ||
+    message.includes('gateway')
+  ) {
+    return 'gateway_unreachable';
+  }
+
+  return 'paired_missing_scopes';
+}
+
 function buildStatusFromRow(row = null) {
   if (!row) {
     return {
@@ -261,7 +282,7 @@ async function startPairing() {
     });
   } catch (error) {
     await upsertIntegrationRow({
-      status: error?.rpcCode === 'NOT_PAIRED' ? 'pending_pairing' : 'paired_missing_scopes',
+      status: mapPairingErrorToStatus(error),
       last_error: error?.message || 'pairing check failed',
       last_checked_at: new Date().toISOString(),
     });
@@ -295,7 +316,7 @@ async function finalizePairing() {
     });
   } catch (error) {
     await upsertIntegrationRow({
-      status: error?.rpcCode === 'NOT_PAIRED' ? 'pending_pairing' : 'paired_missing_scopes',
+      status: mapPairingErrorToStatus(error),
       granted_scopes: [],
       last_error: error?.message || 'pairing finalize failed',
       last_checked_at: new Date().toISOString(),

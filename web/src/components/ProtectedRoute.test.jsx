@@ -135,7 +135,7 @@ describe('ProtectedRoute', () => {
     expect(getOpenClawIntegrationStatus).not.toHaveBeenCalled();
   });
 
-  it('fails open on transient pairing status errors for admins', async () => {
+  it('fails closed on transient pairing status errors for admins', async () => {
     getOpenClawIntegrationStatus.mockRejectedValue(new Error('network down'));
 
     useAuthStore.setState({
@@ -150,13 +150,14 @@ describe('ProtectedRoute', () => {
         <Routes>
           <Route element={<ProtectedRoute />}>
             <Route path="tasks" element={<div>Tasks Page</div>} />
+            <Route path="settings/openclaw-pairing" element={<div>Pairing Setup</div>} />
           </Route>
         </Routes>
       </MemoryRouter>,
     );
 
     await waitFor(() => {
-      expect(screen.getByText('Tasks Page')).toBeInTheDocument();
+      expect(screen.getByText('Pairing Setup')).toBeInTheDocument();
     });
   });
 

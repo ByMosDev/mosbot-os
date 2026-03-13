@@ -41,8 +41,8 @@ export default function ProtectedRoute() {
         setIntegrationReady(status?.ready === true);
       } catch (_error) {
         if (cancelled) return;
-        // Fail-open on transient status check errors; route-level APIs still enforce readiness.
-        setIntegrationReady(true);
+        // Pairing-first contract: fail closed until readiness can be confirmed.
+        setIntegrationReady(false);
       } finally {
         if (!cancelled) {
           setIntegrationCheckDone(true);

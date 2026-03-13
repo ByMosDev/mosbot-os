@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { ArrowPathIcon, ExclamationTriangleIcon, ShieldCheckIcon } from '@heroicons/react/24/outline';
 import {
@@ -13,47 +13,67 @@ export default function OpenClawPairingSetup() {
   const [isStarting, setIsStarting] = useState(false);
   const [isFinalizing, setIsFinalizing] = useState(false);
   const [error, setError] = useState('');
+  const isMountedRef = useRef(true);
 
   const loadStatus = async () => {
+    if (!isMountedRef.current) return;
     setIsLoading(true);
     setError('');
     try {
       const data = await getOpenClawIntegrationStatus();
+      if (!isMountedRef.current) return;
       setStatus(data);
     } catch (err) {
+      if (!isMountedRef.current) return;
       setError(err?.response?.data?.error?.message || err.message || 'Failed to load pairing status');
     } finally {
-      setIsLoading(false);
+      if (isMountedRef.current) {
+        setIsLoading(false);
+      }
     }
   };
 
   useEffect(() => {
+    isMountedRef.current = true;
     loadStatus();
+    return () => {
+      isMountedRef.current = false;
+    };
   }, []);
 
   const handleStartPairing = async () => {
+    if (!isMountedRef.current) return;
     setIsStarting(true);
     setError('');
     try {
       const data = await startOpenClawPairing();
+      if (!isMountedRef.current) return;
       setStatus(data);
     } catch (err) {
+      if (!isMountedRef.current) return;
       setError(err?.response?.data?.error?.message || err.message || 'Failed to start pairing');
     } finally {
-      setIsStarting(false);
+      if (isMountedRef.current) {
+        setIsStarting(false);
+      }
     }
   };
 
   const handleFinalizePairing = async () => {
+    if (!isMountedRef.current) return;
     setIsFinalizing(true);
     setError('');
     try {
       const data = await finalizeOpenClawPairing();
+      if (!isMountedRef.current) return;
       setStatus(data);
     } catch (err) {
+      if (!isMountedRef.current) return;
       setError(err?.response?.data?.error?.message || err.message || 'Failed to finalize pairing');
     } finally {
-      setIsFinalizing(false);
+      if (isMountedRef.current) {
+        setIsFinalizing(false);
+      }
     }
   };
 
