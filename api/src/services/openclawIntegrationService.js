@@ -11,8 +11,8 @@ const REQUIRED_OPERATOR_SCOPES = [
   'operator.write',
 ];
 
-const DEFAULT_CLIENT_ID = 'mosbot';
-const DEFAULT_CLIENT_MODE = 'backend';
+const DEFAULT_CLIENT_ID = 'openclaw-control-ui';
+const DEFAULT_CLIENT_MODE = 'webchat';
 
 function createHttpError(status, message, code, details) {
   const err = new Error(message);
