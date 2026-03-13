@@ -13,6 +13,7 @@ const REQUIRED_OPERATOR_SCOPES = [
 
 const DEFAULT_CLIENT_ID = 'openclaw-control-ui';
 const DEFAULT_CLIENT_MODE = 'webchat';
+let startPairingInFlight = null;
 
 function createHttpError(status, message, code, details) {
   const err = new Error(message);
@@ -274,7 +275,7 @@ async function getDeviceAuthFromDb() {
   };
 }
 
-async function startPairing() {
+async function runStartPairing() {
   const existing = await getIntegrationRow();
   const hasReusablePendingIdentity =
     existing?.status === 'pending_pairing' &&
@@ -348,6 +349,18 @@ async function startPairing() {
   }
 
   return getIntegrationStatus();
+}
+
+async function startPairing() {
+  if (startPairingInFlight) {
+    return startPairingInFlight;
+  }
+
+  startPairingInFlight = runStartPairing().finally(() => {
+    startPairingInFlight = null;
+  });
+
+  return startPairingInFlight;
 }
 
 async function finalizePairing() {

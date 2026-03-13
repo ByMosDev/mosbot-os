@@ -3,10 +3,15 @@ jest.mock('../../db/pool', () => ({
 }));
 
 const pool = require('../../db/pool');
+jest.mock('../openclawGatewayClient', () => ({
+  gatewayWsRpc: jest.fn(),
+}));
+const { gatewayWsRpc } = require('../openclawGatewayClient');
 const {
   REQUIRED_OPERATOR_SCOPES,
   getIntegrationStatus,
   assertIntegrationReady,
+  startPairing,
 } = require('../openclawIntegrationService');
 
 describe('openclawIntegrationService', () => {
@@ -108,6 +113,67 @@ describe('openclawIntegrationService', () => {
       const status = await assertIntegrationReady();
       expect(status.ready).toBe(true);
       expect(status.status).toBe('ready');
+    });
+  });
+
+  describe('startPairing', () => {
+    it('deduplicates concurrent start requests into a single pairing handshake', async () => {
+      let integrationRow = null;
+      pool.query.mockImplementation(async (sql, params) => {
+        if (sql.includes('SELECT * FROM openclaw_integration_state WHERE id = 1')) {
+          return { rows: integrationRow ? [integrationRow] : [] };
+        }
+
+        if (sql.includes('INSERT INTO openclaw_integration_state')) {
+          integrationRow = {
+            ...(integrationRow || {}),
+            id: params[0],
+            status: params[1],
+            gateway_url: params[2],
+            device_id: params[3],
+            client_id: params[4],
+            client_mode: params[5],
+            platform: params[6],
+            public_key: params[7],
+            private_key: params[8],
+            device_token: params[9],
+            granted_scopes: JSON.parse(params[10]),
+            last_error: params[11],
+            last_checked_at: params[12],
+          };
+          return { rows: [] };
+        }
+
+        if (sql.includes('FROM openclaw_integration_state') && sql.includes('granted_scopes')) {
+          return {
+            rows: integrationRow
+              ? [
+                  {
+                    status: integrationRow.status,
+                    granted_scopes: integrationRow.granted_scopes || [],
+                    gateway_url: integrationRow.gateway_url,
+                    device_id: integrationRow.device_id,
+                    client_id: integrationRow.client_id,
+                    client_mode: integrationRow.client_mode,
+                    platform: integrationRow.platform,
+                    last_error: integrationRow.last_error,
+                    last_checked_at: integrationRow.last_checked_at,
+                    updated_at: integrationRow.last_checked_at,
+                  },
+                ]
+              : [],
+          };
+        }
+
+        throw new Error(`Unexpected SQL in test: ${sql}`);
+      });
+
+      gatewayWsRpc.mockRejectedValueOnce(new Error('not paired'));
+
+      const [first, second] = await Promise.all([startPairing(), startPairing()]);
+
+      expect(first).toEqual(second);
+      expect(gatewayWsRpc).toHaveBeenCalledTimes(1);
     });
   });
 });
