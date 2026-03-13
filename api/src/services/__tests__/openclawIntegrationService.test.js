@@ -23,8 +23,8 @@ describe('openclawIntegrationService', () => {
       const sql = pool.query.mock.calls[0][0];
       expect(sql).toContain('SELECT');
       expect(sql).toContain('status');
-      expect(sql).not.toContain('private_key_encrypted');
-      expect(sql).not.toContain('device_token_encrypted');
+      expect(sql).not.toContain('private_key');
+      expect(sql).not.toContain('device_token');
     });
 
     it('returns uninitialized when table is missing (42P01)', async () => {

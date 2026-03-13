@@ -109,8 +109,8 @@ async function upsertIntegrationRow(patch) {
     client_mode: patch.client_mode ?? existing?.client_mode ?? DEFAULT_CLIENT_MODE,
     platform: patch.platform ?? existing?.platform ?? (process.platform || 'node'),
     public_key: patch.public_key ?? existing?.public_key ?? null,
-    private_key_encrypted: patch.private_key_encrypted ?? existing?.private_key_encrypted ?? null,
-    device_token_encrypted: patch.device_token_encrypted ?? existing?.device_token_encrypted ?? null,
+    private_key: patch.private_key ?? existing?.private_key ?? null,
+    device_token: patch.device_token ?? existing?.device_token ?? null,
     granted_scopes: patch.granted_scopes ?? existing?.granted_scopes ?? [],
     last_error: patch.last_error ?? existing?.last_error ?? null,
     last_checked_at: patch.last_checked_at ?? existing?.last_checked_at ?? null,
@@ -119,7 +119,7 @@ async function upsertIntegrationRow(patch) {
   await pool.query(
     `INSERT INTO openclaw_integration_state (
       id, status, gateway_url, device_id, client_id, client_mode, platform,
-      public_key, private_key_encrypted, device_token_encrypted,
+      public_key, private_key, device_token,
       granted_scopes, last_error, last_checked_at
     ) VALUES (
       $1, $2, $3, $4, $5, $6, $7,
@@ -134,8 +134,8 @@ async function upsertIntegrationRow(patch) {
       client_mode = EXCLUDED.client_mode,
       platform = EXCLUDED.platform,
       public_key = EXCLUDED.public_key,
-      private_key_encrypted = EXCLUDED.private_key_encrypted,
-      device_token_encrypted = EXCLUDED.device_token_encrypted,
+      private_key = EXCLUDED.private_key,
+      device_token = EXCLUDED.device_token,
       granted_scopes = EXCLUDED.granted_scopes,
       last_error = EXCLUDED.last_error,
       last_checked_at = EXCLUDED.last_checked_at`,
@@ -148,8 +148,8 @@ async function upsertIntegrationRow(patch) {
       next.client_mode,
       next.platform,
       next.public_key,
-      next.private_key_encrypted,
-      next.device_token_encrypted,
+      next.private_key,
+      next.device_token,
       JSON.stringify(next.granted_scopes || []),
       next.last_error,
       next.last_checked_at,
@@ -209,8 +209,8 @@ async function getDeviceAuthFromDb() {
   const row = await getIntegrationRow();
   if (!row) return null;
 
-  const privateSeed = decryptSecret(row.private_key_encrypted);
-  const deviceToken = decryptSecret(row.device_token_encrypted);
+  const privateSeed = decryptSecret(row.private_key);
+  const deviceToken = decryptSecret(row.device_token);
   if (!row.device_id || !row.public_key || !privateSeed || !deviceToken) {
     return null;
   }
@@ -237,8 +237,8 @@ async function startPairing() {
     client_mode: identity.clientMode,
     platform: identity.platform,
     public_key: identity.publicKey,
-    private_key_encrypted: encryptSecret(identity.privateSeed),
-    device_token_encrypted: encryptSecret(identity.deviceToken),
+    private_key: encryptSecret(identity.privateSeed),
+    device_token: encryptSecret(identity.deviceToken),
     granted_scopes: [],
     last_error: null,
     last_checked_at: new Date().toISOString(),
