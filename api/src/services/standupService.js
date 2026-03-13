@@ -7,7 +7,7 @@ const STANDUP_AGENT_ORDER = ['coo', 'cto', 'cpo', 'cmo'];
 
 /**
  * Fetch agents from DB in standup order (COO > CTO > CPO > CMO)
- * Only returns active, non-archived agents with recognised agent_id
+ * Only returns active, non-deprecated agents with recognised agent_id
  * @returns {Promise<Array>} Array of agent rows
  */
 async function getAgentUsersForStandup() {
@@ -21,7 +21,7 @@ async function getAgentUsersForStandup() {
        FROM agents
        WHERE agent_id = ANY($1::text[])
          AND active = true
-         AND status != 'archived'
+         AND status = 'active'
        ORDER BY ARRAY_POSITION($1::text[], agent_id)`,
       [STANDUP_AGENT_ORDER],
     );
