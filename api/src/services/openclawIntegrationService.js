@@ -235,16 +235,19 @@ async function getDeviceAuthFromDb() {
   const row = await getIntegrationRow();
   if (!row) return null;
 
-  const privateSeed = decryptSecret(row.private_key);
+  const privateKeyMaterial = decryptSecret(row.private_key);
   const deviceToken = decryptSecret(row.device_token);
-  if (!row.device_id || !row.public_key || !privateSeed || !deviceToken) {
+  if (!row.device_id || !row.public_key || !privateKeyMaterial || !deviceToken) {
     return null;
   }
+
+  const privateKey = privateKeyFromStoredMaterial(privateKeyMaterial);
+  if (!privateKey) return null;
 
   return {
     deviceId: row.device_id,
     publicKey: row.public_key,
-    privateKey: privateKeyFromSeedB64(privateSeed),
+    privateKey,
     deviceToken,
     clientId: row.client_id || DEFAULT_CLIENT_ID,
     clientMode: row.client_mode || DEFAULT_CLIENT_MODE,
@@ -272,7 +275,7 @@ async function startPairing() {
       client_mode: identity.clientMode,
       platform: identity.platform,
       public_key: identity.publicKey,
-      private_key: encryptSecret(identity.privateSeed),
+      private_key: encryptSecret(identity.privateKeyPem),
       device_token: encryptSecret(identity.deviceToken),
       granted_scopes: [],
       last_error: null,
