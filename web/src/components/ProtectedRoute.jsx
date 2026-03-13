@@ -35,6 +35,10 @@ export default function ProtectedRoute() {
         return;
       }
 
+      if (!cancelled) {
+        setIntegrationCheckDone(false);
+      }
+
       try {
         const status = await getOpenClawIntegrationStatus();
         if (cancelled) return;

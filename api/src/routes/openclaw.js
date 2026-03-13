@@ -1324,8 +1324,10 @@ registerOpenClawWorkspaceRoutes({
 });
 
 // Wizard-first pairing gate: lock OpenClaw-dependent routes until integration is ready.
+// Keep auth first so unauthenticated requests still return 401/403 semantics.
 router.use(
   ['/projects', '/sessions', '/cron-jobs', '/usage'],
+  requireAuth,
   requireIntegrationReady,
 );
 

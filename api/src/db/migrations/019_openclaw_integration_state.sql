@@ -1,6 +1,7 @@
 -- 019_openclaw_integration_state.sql
 -- Wizard-first OpenClaw integration state (singleton row, DB-backed pairing contract)
--- Sensitive values are stored as encrypted-at-rest payloads (no plaintext secret columns).
+-- NOTE: secret fields are stored in this table for pairing continuity.
+-- If encryption-at-rest is introduced later, update this migration note and service contract together.
 
 BEGIN;
 
