@@ -50,6 +50,18 @@ jest.mock('../../services/docsLinkReconciliationService', () => ({
   ensureProjectLinkIfMissing: jest.fn().mockResolvedValue({ action: 'unchanged' }),
 }));
 
+jest.mock('../../services/openclawIntegrationService', () => ({
+  REQUIRED_OPERATOR_SCOPES: [
+    'operator.admin',
+    'operator.approvals',
+    'operator.pairing',
+    'operator.read',
+    'operator.write',
+  ],
+  getIntegrationStatus: jest.fn(),
+  assertIntegrationReady: jest.fn(),
+}));
+
 const request = require('supertest');
 const express = require('express');
 const jwt = require('jsonwebtoken');
@@ -69,6 +81,10 @@ const {
   ensureDocsLinkIfMissing,
   ensureProjectLinkIfMissing,
 } = require('../../services/docsLinkReconciliationService');
+const {
+  getIntegrationStatus,
+  assertIntegrationReady,
+} = require('../../services/openclawIntegrationService');
 const bcrypt = require('bcrypt');
 
 // Helper to get JWT token for a user
@@ -118,6 +134,26 @@ describe('OpenClaw Routes', () => {
     cronList.mockResolvedValue([]);
     gatewayWsRpc.mockResolvedValue({});
     invokeTool.mockResolvedValue({ status: 'ok', reply: 'DONE', runId: 'run-1' });
+    getIntegrationStatus.mockResolvedValue({
+      status: 'ready',
+      ready: true,
+      requiredScopes: [
+        'operator.admin',
+        'operator.approvals',
+        'operator.pairing',
+        'operator.read',
+        'operator.write',
+      ],
+      grantedScopes: [
+        'operator.admin',
+        'operator.approvals',
+        'operator.pairing',
+        'operator.read',
+        'operator.write',
+      ],
+      missingScopes: [],
+    });
+    assertIntegrationReady.mockResolvedValue({ ready: true });
     sessionsListAllViaWs.mockResolvedValue([]);
     sessionsHistory.mockResolvedValue({ messages: [] });
     upsertSessionUsageBatch.mockResolvedValue(undefined);
@@ -2809,6 +2845,37 @@ describe('OpenClaw Routes', () => {
     });
   });
 
+  describe('GET /api/v1/openclaw/integration/status', () => {
+    it('returns integration readiness for authenticated users', async () => {
+      const token = getToken('admin-id', 'admin');
+      getIntegrationStatus.mockResolvedValueOnce({
+        status: 'pending_pairing',
+        ready: false,
+        requiredScopes: [
+          'operator.admin',
+          'operator.approvals',
+          'operator.pairing',
+          'operator.read',
+          'operator.write',
+        ],
+        grantedScopes: ['operator.admin'],
+        missingScopes: ['operator.read', 'operator.write', 'operator.approvals', 'operator.pairing'],
+      });
+
+      const response = await request(app)
+        .get('/api/v1/openclaw/integration/status')
+        .set('Authorization', `Bearer ${token}`);
+
+      expect(response.status).toBe(200);
+      expect(response.body.data).toEqual(
+        expect.objectContaining({
+          status: 'pending_pairing',
+          ready: false,
+        }),
+      );
+    });
+  });
+
   describe('GET /api/v1/openclaw/config', () => {
     beforeEach(() => {
       gatewayWsRpc.mockResolvedValue({
@@ -2841,6 +2908,22 @@ describe('OpenClaw Routes', () => {
         .set('Authorization', `Bearer ${token}`);
 
       expect(response.status).toBe(200);
+    });
+
+    it('should return pairing-required when integration is not ready', async () => {
+      const token = getToken('admin-id', 'admin');
+      const err = new Error('OpenClaw pairing is required before using this feature. Complete the pairing wizard first.');
+      err.status = 503;
+      err.code = 'OPENCLAW_PAIRING_REQUIRED';
+      err.details = { status: 'pending_pairing', missingScopes: ['operator.read'] };
+      assertIntegrationReady.mockRejectedValueOnce(err);
+
+      const response = await request(app)
+        .get('/api/v1/openclaw/config')
+        .set('Authorization', `Bearer ${token}`);
+
+      expect(response.status).toBe(503);
+      expect(response.body.error.code).toBe('OPENCLAW_PAIRING_REQUIRED');
     });
 
     it('should deny regular users from getting config', async () => {

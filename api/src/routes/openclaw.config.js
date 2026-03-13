@@ -5,6 +5,10 @@ const {
   listBackups,
   readBackup,
 } = require('../services/openclawConfigService');
+const {
+  getIntegrationStatus,
+  assertIntegrationReady,
+} = require('../services/openclawIntegrationService');
 
 function requireOwnerOrAdmin(req, res, next) {
   if (!req.user || !['admin', 'owner'].includes(req.user.role)) {
@@ -46,8 +50,18 @@ function handleKnownConfigError(error, res, next) {
 }
 
 function registerOpenClawConfigRoutes({ router, requireAuth }) {
+  router.get('/integration/status', requireAuth, async (req, res, next) => {
+    try {
+      const data = await getIntegrationStatus();
+      res.json({ data });
+    } catch (error) {
+      handleKnownConfigError(error, res, next);
+    }
+  });
+
   router.get('/config', requireAuth, requireOwnerOrAdmin, async (req, res, next) => {
     try {
+      await assertIntegrationReady();
       logger.info('Fetching OpenClaw config via Gateway RPC', {
         userId: req.user.id,
         userRole: req.user.role,
@@ -61,6 +75,7 @@ function registerOpenClawConfigRoutes({ router, requireAuth }) {
 
   router.put('/config', requireAuth, requireOwnerOrAdmin, async (req, res, next) => {
     try {
+      await assertIntegrationReady();
       const data = await applyConfig({
         userId: req.user.id,
         userRole: req.user.role,
