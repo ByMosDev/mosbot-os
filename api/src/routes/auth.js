@@ -20,7 +20,7 @@ router.post('/login', async (req, res, next) => {
 
     // Find user by email
     const result = await pool.query(
-      'SELECT id, name, email, password_hash, avatar_url, role, active FROM users WHERE email = $1',
+      'SELECT id, name, email, password_hash, avatar_url, role, active, agent_id FROM users WHERE email = $1',
       [email],
     );
 
@@ -54,6 +54,7 @@ router.post('/login', async (req, res, next) => {
       email: user.email,
       name: user.name,
       role: user.role,
+      agent_id: user.agent_id || undefined,
     });
 
     // Return user data and token (exclude password_hash)
@@ -328,7 +329,7 @@ const authenticateToken = async (req, res, next) => {
 
     // Verify user still exists and is active
     const result = await pool.query(
-      'SELECT id, name, email, role, active FROM users WHERE id = $1',
+      'SELECT id, name, email, role, active, agent_id FROM users WHERE id = $1',
       [decoded.id],
     );
 
@@ -345,7 +346,12 @@ const authenticateToken = async (req, res, next) => {
     }
 
     // Use fresh role from DB (not stale JWT claims)
-    req.user = { ...decoded, active: result.rows[0].active, role: result.rows[0].role };
+    req.user = {
+      ...decoded,
+      active: result.rows[0].active,
+      role: result.rows[0].role,
+      agent_id: result.rows[0].agent_id || decoded.agent_id || null,
+    };
     next();
   } catch (_err) {
     return res.status(401).json({

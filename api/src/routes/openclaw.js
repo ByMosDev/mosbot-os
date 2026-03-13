@@ -828,6 +828,28 @@ async function getAssignedProjectsForAgent(agentId) {
   return result.rows || [];
 }
 
+async function getAssignedProjectRootPaths(agentId) {
+  if (!agentId) return [];
+  try {
+    const result = await pool.query(
+      `SELECT p.root_path
+         FROM agent_project_assignments apa
+         JOIN projects p ON p.id = apa.project_id
+        WHERE apa.agent_id = $1
+          AND p.status = 'active'
+          AND p.root_path IS NOT NULL
+        ORDER BY p.root_path ASC`,
+      [agentId],
+    );
+    return [...new Set((result.rows || []).map((row) => row.root_path).filter(Boolean))];
+  } catch (error) {
+    if (error.code === '42P01') {
+      return [];
+    }
+    throw error;
+  }
+}
+
 async function mapWithConcurrency(items, limit, worker) {
   const normalizedLimit = Math.max(1, Number(limit) || 1);
   const queue = [...items];
@@ -1278,6 +1300,7 @@ registerOpenClawWorkspaceRoutes({
   makeOpenClawRequest,
   normalizeRemapAndValidateWorkspacePath,
   isAllowedWorkspacePath,
+  getAssignedProjectRootPaths,
 });
 
 // GET /api/v1/openclaw/projects
