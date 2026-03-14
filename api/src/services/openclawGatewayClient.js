@@ -108,6 +108,10 @@ const PERSISTENT_RPC_IDLE_MS = parseInt(
   process.env.OPENCLAW_WS_RPC_IDLE_MS || String(30 * 60 * 1000),
   10,
 );
+const PERSISTENT_RPC_MAX_INFLIGHT = Math.max(
+  1,
+  parseInt(process.env.OPENCLAW_WS_RPC_MAX_INFLIGHT || '1', 10),
+);
 // Enforced for pre-production hardening: always use persistent RPC path.
 const ENABLE_PERSISTENT_RPC = true;
 
@@ -119,6 +123,7 @@ const persistentRpcState = {
   connecting: null,
   idleTimer: null,
   currentUrl: null,
+  queue: Promise.resolve(),
 };
 
 function resetPersistentRpcState() {
@@ -143,6 +148,7 @@ function resetPersistentRpcState() {
   }
   persistentRpcState.ws = null;
   persistentRpcState.nextId = 1;
+  persistentRpcState.queue = Promise.resolve();
 }
 
 function buildDeviceConnectPayload(deviceAuth, nonce, authOptions = {}) {
@@ -946,26 +952,40 @@ async function ensurePersistentRpcConnection(options = {}) {
   });
 }
 
-async function gatewayWsRpcPersistent(method, params = {}, options = {}) {
-  await ensurePersistentRpcConnection(options);
+function enqueuePersistentRpc(operation) {
+  // Default behavior: serialize through one in-flight RPC over one socket.
+  if (PERSISTENT_RPC_MAX_INFLIGHT <= 1) {
+    const run = persistentRpcState.queue.then(operation, operation);
+    persistentRpcState.queue = run.catch(() => {});
+    return run;
+  }
 
-  try {
-    const result = await persistentRpcSend(method, params, options.timeoutMs);
-    schedulePersistentRpcIdleClose();
-    return result;
-  } catch (error) {
-    if (
-      error?.message?.includes('Persistent gateway RPC timed out') ||
-      error?.message?.includes('Persistent WebSocket closed')
-    ) {
-      resetPersistentRpcState();
-      await ensurePersistentRpcConnection(options);
+  // Optional relaxed mode for experimentation.
+  return operation();
+}
+
+async function gatewayWsRpcPersistent(method, params = {}, options = {}) {
+  return enqueuePersistentRpc(async () => {
+    await ensurePersistentRpcConnection(options);
+
+    try {
       const result = await persistentRpcSend(method, params, options.timeoutMs);
       schedulePersistentRpcIdleClose();
       return result;
+    } catch (error) {
+      if (
+        error?.message?.includes('Persistent gateway RPC timed out') ||
+        error?.message?.includes('Persistent WebSocket closed')
+      ) {
+        resetPersistentRpcState();
+        await ensurePersistentRpcConnection(options);
+        const result = await persistentRpcSend(method, params, options.timeoutMs);
+        schedulePersistentRpcIdleClose();
+        return result;
+      }
+      throw error;
     }
-    throw error;
-  }
+  });
 }
 
 /**
