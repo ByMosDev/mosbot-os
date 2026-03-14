@@ -107,9 +107,8 @@ const PERSISTENT_RPC_IDLE_MS = parseInt(
   process.env.OPENCLAW_WS_RPC_IDLE_MS || '15000',
   10,
 );
-const ENABLE_PERSISTENT_RPC =
-  process.env.OPENCLAW_WS_PERSISTENT_RPC === 'true' ||
-  (process.env.OPENCLAW_WS_PERSISTENT_RPC !== 'false' && process.env.NODE_ENV === 'production');
+// Enforced for pre-production hardening: always use persistent RPC path.
+const ENABLE_PERSISTENT_RPC = true;
 
 const persistentRpcState = {
   ws: null,
