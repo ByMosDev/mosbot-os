@@ -125,6 +125,8 @@ const PERSISTENT_RPC_MAX_INFLIGHT = parsePositiveIntEnv(
   process.env.OPENCLAW_WS_RPC_MAX_INFLIGHT,
   1,
 );
+// Security default: verify TLS certs.
+// If your gateway uses self-signed/internal certs, set OPENCLAW_GATEWAY_INSECURE_TLS=true explicitly.
 const OPENCLAW_GATEWAY_INSECURE_TLS = process.env.OPENCLAW_GATEWAY_INSECURE_TLS === 'true';
 
 // Runtime default is persistent RPC; explicit env override supports rollback during incidents.
@@ -142,6 +144,8 @@ const persistentRpcState = {
   currentUrl: null,
   currentAuthFingerprint: null,
   queue: Promise.resolve(),
+  inflight: 0,
+  waiters: [],
 };
 
 function createPersistentRpcResetError(cause = null) {
@@ -186,6 +190,11 @@ function resetPersistentRpcState(cause = null) {
   persistentRpcState.ws = null;
   persistentRpcState.nextId = 1;
   persistentRpcState.queue = Promise.resolve();
+  persistentRpcState.inflight = 0;
+  for (const resume of persistentRpcState.waiters) {
+    resume();
+  }
+  persistentRpcState.waiters = [];
 }
 
 function buildAuthFingerprint(gatewayToken, deviceAuth) {
@@ -786,7 +795,11 @@ function schedulePersistentRpcIdleClose() {
 
 function persistentRpcSend(method, params = {}, timeoutMs = null) {
   if (!persistentRpcState.ws || !persistentRpcState.connected) {
-    return Promise.reject(new Error('Persistent gateway RPC is not connected'));
+    const notConnectedError = new Error('Persistent gateway RPC is not connected');
+    notConnectedError.status = 503;
+    notConnectedError.code = 'SERVICE_UNAVAILABLE';
+    notConnectedError.persistentCode = 'PERSISTENT_RPC_NOT_CONNECTED';
+    return Promise.reject(notConnectedError);
   }
 
   const id = String(persistentRpcState.nextId++);
@@ -1047,16 +1060,32 @@ async function ensurePersistentRpcConnection(options = {}) {
   });
 }
 
-function enqueuePersistentRpc(operation) {
-  // Default behavior: serialize through one in-flight RPC over one socket.
-  if (PERSISTENT_RPC_MAX_INFLIGHT <= 1) {
-    const run = persistentRpcState.queue.then(operation, operation);
-    persistentRpcState.queue = run.catch(() => {});
-    return run;
+async function acquirePersistentRpcSlot() {
+  while (persistentRpcState.inflight >= PERSISTENT_RPC_MAX_INFLIGHT) {
+    await new Promise((resolve) => {
+      persistentRpcState.waiters.push(resolve);
+    });
   }
+  persistentRpcState.inflight += 1;
+}
 
-  // Optional relaxed mode for experimentation.
-  return operation();
+function releasePersistentRpcSlot() {
+  persistentRpcState.inflight = Math.max(0, persistentRpcState.inflight - 1);
+  const resume = persistentRpcState.waiters.shift();
+  if (resume) {
+    resume();
+  }
+}
+
+function enqueuePersistentRpc(operation) {
+  return (async () => {
+    await acquirePersistentRpcSlot();
+    try {
+      return await operation();
+    } finally {
+      releasePersistentRpcSlot();
+    }
+  })();
 }
 
 async function gatewayWsRpcPersistent(method, params = {}, options = {}) {
@@ -1072,7 +1101,8 @@ async function gatewayWsRpcPersistent(method, params = {}, options = {}) {
       if (
         persistentCode === 'PERSISTENT_RPC_TIMEOUT' ||
         persistentCode === 'PERSISTENT_RPC_CLOSED' ||
-        persistentCode === 'PERSISTENT_RPC_RESET'
+        persistentCode === 'PERSISTENT_RPC_RESET' ||
+        persistentCode === 'PERSISTENT_RPC_NOT_CONNECTED'
       ) {
         resetPersistentRpcState(error);
         await ensurePersistentRpcConnection(options);
