@@ -103,6 +103,48 @@ const DEVICE_SCOPES = [
   'operator.write',
 ];
 
+const PERSISTENT_RPC_IDLE_MS = parseInt(
+  process.env.OPENCLAW_WS_RPC_IDLE_MS || '15000',
+  10,
+);
+const ENABLE_PERSISTENT_RPC =
+  process.env.OPENCLAW_WS_PERSISTENT_RPC === 'true' ||
+  (process.env.OPENCLAW_WS_PERSISTENT_RPC !== 'false' && process.env.NODE_ENV === 'production');
+
+const persistentRpcState = {
+  ws: null,
+  pending: new Map(),
+  nextId: 1,
+  connected: false,
+  connecting: null,
+  idleTimer: null,
+  currentUrl: null,
+};
+
+function resetPersistentRpcState() {
+  if (persistentRpcState.idleTimer) {
+    clearTimeout(persistentRpcState.idleTimer);
+    persistentRpcState.idleTimer = null;
+  }
+  persistentRpcState.connected = false;
+  persistentRpcState.connecting = null;
+  persistentRpcState.currentUrl = null;
+  for (const [, handler] of persistentRpcState.pending) {
+    handler.reject(new Error('Persistent gateway RPC connection reset'));
+  }
+  persistentRpcState.pending.clear();
+  if (persistentRpcState.ws) {
+    try {
+      persistentRpcState.ws.removeAllListeners();
+      persistentRpcState.ws.close();
+    } catch (_) {
+      void _;
+    }
+  }
+  persistentRpcState.ws = null;
+  persistentRpcState.nextId = 1;
+}
+
 function buildDeviceConnectPayload(deviceAuth, nonce, authOptions = {}) {
   const signedAt = Date.now();
   const clientId = deviceAuth.clientId || DEVICE_CLIENT_ID;
@@ -659,7 +701,271 @@ async function sessionsListAllViaWs({
   if (limit > 0) params.limit = limit;
   if (messageLimit > 0) params.messageLimit = messageLimit;
 
-  return gatewayWsRpcWithDeviceAuth('sessions.list', params);
+  return gatewayWsRpc('sessions.list', params);
+}
+
+function schedulePersistentRpcIdleClose() {
+  if (persistentRpcState.idleTimer) {
+    clearTimeout(persistentRpcState.idleTimer);
+  }
+
+  if (!persistentRpcState.ws || !persistentRpcState.connected) {
+    return;
+  }
+
+  persistentRpcState.idleTimer = setTimeout(() => {
+    if (!persistentRpcState.ws) return;
+    if (persistentRpcState.pending.size > 0) return;
+    try {
+      persistentRpcState.ws.close();
+    } catch (_) {
+      void _;
+    }
+  }, PERSISTENT_RPC_IDLE_MS);
+}
+
+function persistentRpcSend(method, params = {}, timeoutMs = null) {
+  if (!persistentRpcState.ws || !persistentRpcState.connected) {
+    return Promise.reject(new Error('Persistent gateway RPC is not connected'));
+  }
+
+  const id = String(persistentRpcState.nextId++);
+  const request = JSON.stringify({ type: 'req', id, method, params });
+
+  return new Promise((resolve, reject) => {
+    const perRequestTimeout =
+      timeoutMs != null && Number.isFinite(timeoutMs)
+        ? timeoutMs
+        : config.openclaw.gatewayTimeoutMs;
+
+    const timeout = setTimeout(() => {
+      persistentRpcState.pending.delete(id);
+      reject(new Error(`Persistent gateway RPC timed out for method ${method}`));
+    }, perRequestTimeout);
+
+    persistentRpcState.pending.set(id, {
+      resolve: (payload) => {
+        clearTimeout(timeout);
+        resolve(payload);
+      },
+      reject: (err) => {
+        clearTimeout(timeout);
+        reject(err);
+      },
+    });
+
+    try {
+      persistentRpcState.ws.send(request);
+    } catch (error) {
+      persistentRpcState.pending.delete(id);
+      clearTimeout(timeout);
+      reject(error);
+    }
+  });
+}
+
+async function ensurePersistentRpcConnection(options = {}) {
+  if (persistentRpcState.ws && persistentRpcState.connected) {
+    return;
+  }
+
+  if (persistentRpcState.connecting) {
+    return persistentRpcState.connecting;
+  }
+
+  const gatewayUrl = config.openclaw.gatewayUrl;
+  const gatewayToken = config.openclaw.gatewayToken;
+  const resolvedDeviceAuth = resolveDeviceAuthConfig(options);
+  const deviceAuth =
+    resolvedDeviceAuth && typeof resolvedDeviceAuth.then === 'function'
+      ? await resolvedDeviceAuth
+      : resolvedDeviceAuth;
+
+  if (!gatewayUrl) {
+    const err = new Error(
+      'OpenClaw gateway is not configured. Set OPENCLAW_GATEWAY_URL to enable.',
+    );
+    err.status = 503;
+    err.code = 'SERVICE_NOT_CONFIGURED';
+    throw err;
+  }
+
+  if (!deviceAuth) {
+    const err = new Error('OpenClaw device auth is required but no device credentials were provided');
+    err.status = 503;
+    err.code = 'DEVICE_AUTH_REQUIRED';
+    throw err;
+  }
+
+  if (persistentRpcState.ws && persistentRpcState.currentUrl !== gatewayUrl) {
+    resetPersistentRpcState();
+  }
+
+  const wsUrl = gatewayUrl.replace(/^http:\/\//, 'ws://').replace(/^https:\/\//, 'wss://');
+  const WebSocket = require('ws');
+  const parsedUrl = new URL(wsUrl.replace(/^ws/, 'http'));
+  const originHost = parsedUrl.host;
+  const originScheme = wsUrl.startsWith('wss://') ? 'https' : 'http';
+
+  persistentRpcState.connecting = new Promise((resolve, reject) => {
+    let settled = false;
+    const connectTimeout = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      resetPersistentRpcState();
+      const err = new Error('OpenClaw persistent WebSocket connect timed out');
+      err.status = 503;
+      err.code = 'SERVICE_TIMEOUT';
+      reject(err);
+    }, config.openclaw.gatewayTimeoutMs);
+
+    const ws = new WebSocket(wsUrl, {
+      headers: {
+        ...(gatewayToken ? { Authorization: `Bearer ${gatewayToken}` } : {}),
+        Origin: `${originScheme}://${originHost}`,
+        Host: originHost,
+      },
+      rejectUnauthorized: false,
+    });
+
+    const failConnect = (error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(connectTimeout);
+      resetPersistentRpcState();
+      reject(error);
+    };
+
+    ws.on('open', () => {
+      logger.debug('Persistent gateway WebSocket opened, waiting for connect.challenge');
+    });
+
+    ws.on('message', async (raw) => {
+      let msg;
+      try {
+        msg = JSON.parse(String(raw));
+      } catch (_) {
+        return;
+      }
+
+      if (msg.type === 'event' && msg.event === 'connect.challenge') {
+        try {
+          const sharedGatewayToken =
+            typeof gatewayToken === 'string' && gatewayToken.trim().length > 0
+              ? gatewayToken.trim()
+              : '';
+          const storedDeviceToken =
+            typeof deviceAuth?.deviceToken === 'string' && deviceAuth.deviceToken.trim().length > 0
+              ? deviceAuth.deviceToken.trim()
+              : '';
+          const authToken = sharedGatewayToken || storedDeviceToken;
+          const authDeviceToken =
+            sharedGatewayToken && storedDeviceToken && sharedGatewayToken !== storedDeviceToken
+              ? storedDeviceToken
+              : null;
+
+          const nonce = msg.payload?.nonce || '';
+          const connectPayload = buildDeviceConnectPayload(deviceAuth, nonce, {
+            authToken,
+            authDeviceToken,
+          });
+          const connectResult = await new Promise((res, rej) => {
+            const id = String(persistentRpcState.nextId++);
+            persistentRpcState.pending.set(id, {
+              resolve: (payload) => res(payload),
+              reject: (err) => rej(err),
+            });
+            ws.send(JSON.stringify({ type: 'req', id, method: 'connect', params: connectPayload }));
+          });
+          if (typeof options.onConnectOk === 'function') {
+            await options.onConnectOk(connectResult);
+          }
+        } catch (error) {
+          failConnect(error);
+        }
+        return;
+      }
+
+      if (msg.type === 'res') {
+        const handler = persistentRpcState.pending.get(msg.id);
+        if (!handler) return;
+        persistentRpcState.pending.delete(msg.id);
+
+        if (msg.ok) {
+          handler.resolve(msg.payload);
+          if (!persistentRpcState.connected) {
+            persistentRpcState.connected = true;
+            if (!settled) {
+              settled = true;
+              clearTimeout(connectTimeout);
+              persistentRpcState.currentUrl = gatewayUrl;
+              resolve();
+            }
+          }
+          schedulePersistentRpcIdleClose();
+        } else {
+          const rpcErr = new Error(msg.error?.message || 'RPC request failed');
+          rpcErr.rpcCode = msg.error?.code;
+          rpcErr.rpcDetails = msg.error;
+          handler.reject(rpcErr);
+          if (!persistentRpcState.connected) {
+            failConnect(rpcErr);
+          }
+        }
+      }
+    });
+
+    ws.on('error', (err) => {
+      const wrapped = new Error(`OpenClaw persistent WebSocket error: ${err.message}`);
+      wrapped.status = 503;
+      wrapped.code = 'SERVICE_UNAVAILABLE';
+      failConnect(wrapped);
+    });
+
+    ws.on('close', (code, reason) => {
+      const closeError = new Error(`Persistent WebSocket closed (${code}): ${reason}`);
+      for (const [, handler] of persistentRpcState.pending) {
+        handler.reject(closeError);
+      }
+      persistentRpcState.pending.clear();
+      persistentRpcState.connected = false;
+      persistentRpcState.ws = null;
+      persistentRpcState.currentUrl = null;
+      if (!settled) {
+        settled = true;
+        clearTimeout(connectTimeout);
+        reject(closeError);
+      }
+    });
+
+    persistentRpcState.ws = ws;
+  });
+
+  return persistentRpcState.connecting.finally(() => {
+    persistentRpcState.connecting = null;
+  });
+}
+
+async function gatewayWsRpcPersistent(method, params = {}, options = {}) {
+  await ensurePersistentRpcConnection(options);
+
+  try {
+    const result = await persistentRpcSend(method, params, options.timeoutMs);
+    schedulePersistentRpcIdleClose();
+    return result;
+  } catch (error) {
+    if (
+      error?.message?.includes('Persistent gateway RPC timed out') ||
+      error?.message?.includes('Persistent WebSocket closed')
+    ) {
+      resetPersistentRpcState();
+      await ensurePersistentRpcConnection(options);
+      const result = await persistentRpcSend(method, params, options.timeoutMs);
+      schedulePersistentRpcIdleClose();
+      return result;
+    }
+    throw error;
+  }
 }
 
 /**
@@ -855,8 +1161,13 @@ async function gatewayWsRpcWithDeviceAuth(method, params = {}, options = {}) {
   });
 }
 
-// Keep the old function name as an alias for backward compatibility
-const gatewayWsRpc = gatewayWsRpcWithDeviceAuth;
+// Main RPC entrypoint: persistent connection in production, short-lived in dev/tests.
+async function gatewayWsRpc(method, params = {}, options = {}) {
+  if (ENABLE_PERSISTENT_RPC) {
+    return gatewayWsRpcPersistent(method, params, options);
+  }
+  return gatewayWsRpcWithDeviceAuth(method, params, options);
+}
 
 /**
  * Fetch session message history via WebSocket RPC chat.history.
