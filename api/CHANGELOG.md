@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Persistent OpenClaw gateway RPC mode (`gatewayWsRpc`) with reusable WebSocket channel, auth-aware reconnect logic, and bounded in-flight request control
+- New persistent RPC regression tests (`openclawGatewayClient.persistent.test.js`) covering socket reuse, auth-fingerprint reconnect, and explicit short-lived rollback override
 - Committed `docker-compose.override.yml` for local development convenience (auto-loaded by docker compose)
 - Development override swaps production nginx dashboard for Vite dev server with HMR and bind-mounted source
 - OpenClaw split-root support, including native `~/.openclaw` remaps and config-root/workspace separation
@@ -19,6 +21,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- OpenClaw gateway RPC defaults now prefer persistent mode at runtime, with tri-state override support via `OPENCLAW_WS_PERSISTENT_RPC` (`true`/`false`/unset)
+- OpenClaw WebSocket TLS validation now defaults to secure verification; self-signed/internal certs require explicit `OPENCLAW_GATEWAY_INSECURE_TLS=true`
+- Added persistent RPC tuning controls: `OPENCLAW_WS_RPC_IDLE_MS` and `OPENCLAW_WS_RPC_MAX_INFLIGHT`
 - Simplified org chart generation to derive from `agents.list` and removed corporate defaults
 - Renamed org chart references to agents
 - Improved CORS configuration to handle requests with no origin (mobile apps, curl requests)
@@ -37,6 +42,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Reduced OpenClaw gateway WebSocket churn by replacing per-RPC socket open/close patterns with persistent channel reuse
+- Normalized persistent RPC error contracts to existing gateway semantics (`SERVICE_TIMEOUT` / `SERVICE_UNAVAILABLE` with `503`) while preserving internal persistent error codes
 - Disabled OpenClaw workspace client when the workspace URL is unset
 - Gateway auth fallback now uses the backend client identity
 - OpenClaw remap handling now remaps absolute paths before workspace allowlist checks

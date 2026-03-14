@@ -8,12 +8,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- OpenClaw gateway persistent RPC configuration docs for:
+  - `OPENCLAW_WS_PERSISTENT_RPC`
+  - `OPENCLAW_WS_RPC_IDLE_MS`
+  - `OPENCLAW_WS_RPC_MAX_INFLIGHT`
+  - `OPENCLAW_GATEWAY_INSECURE_TLS`
 - OpenClaw split-root documentation (config root vs workspace root), including `~/.openclaw` remap defaults and remap precedence
 - `/workspace` path documentation as the canonical main OpenClaw path, plus additive remap prefix behavior
 - Workspace service documentation updates for platform support and read/write mount defaults
 
 ### Changed
 
+- Updated configuration docs to call out gateway TLS verification defaults and explicit self-signed/internal cert override behavior
 - Updated org chart documentation to the simplified Agents view and naming
 - OpenClaw docs updated for split-root model and updated path/mount guidance
 
