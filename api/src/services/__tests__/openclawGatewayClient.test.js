@@ -2,7 +2,6 @@
  * Comprehensive tests for openclawGatewayClient.js
  *
  * Tests:
- * - getDeviceAuthConfig()
  * - buildDeviceConnectPayload()
  * - isRetryableError()
  * - makeOpenClawGatewayRequest() with retry logic
@@ -11,7 +10,6 @@
  * - sessionsHistory()
  * - cronList()
  * - parseJsonWithLiteralNewlines()
- * - warnIfDeviceAuthNotConfigured()
  */
 
 // Mock fetch globally before requiring modules - this ensures NO actual network calls
@@ -38,12 +36,6 @@ const mockConfig = {
     gatewayUrl: null,
     gatewayToken: null,
     gatewayTimeoutMs: 2000, // Reduced from 15000ms to 2000ms for faster tests
-    device: {
-      id: null,
-      publicKey: null,
-      privateKey: null,
-      token: null,
-    },
   },
 };
 jest.mock('../../config', () => mockConfig);
@@ -67,7 +59,6 @@ const { getFileContent } = require('../openclawWorkspaceClient');
 // Import the module
 const openclawGatewayClient = require('../openclawGatewayClient');
 const {
-  getDeviceAuthConfig,
   buildDeviceConnectPayload,
   isRetryableError,
   makeOpenClawGatewayRequest,
@@ -78,7 +69,6 @@ const {
   sessionsHistoryViaWs,
   cronList,
   parseJsonWithLiteralNewlines,
-  warnIfDeviceAuthNotConfigured,
   sleep,
 } = openclawGatewayClient;
 
@@ -87,6 +77,21 @@ function emitWs(event, ...args) {
   if (handler) {
     handler(...args);
   }
+}
+
+function configureDeviceAuth() {
+  const crypto = require('crypto');
+  const keyPair = crypto.generateKeyPairSync('ed25519');
+  const publicKeyDer = keyPair.publicKey.export({ format: 'der', type: 'spki' });
+  const publicKeyBytes = publicKeyDer.slice(12);
+  const publicKeyB64 = publicKeyBytes.toString('base64url');
+
+  return {
+    deviceId: 'device-1',
+    publicKey: publicKeyB64,
+    privateKey: keyPair.privateKey,
+    deviceToken: 'device-token',
+  };
 }
 
 describe('openclawGatewayClient', () => {
@@ -99,10 +104,6 @@ describe('openclawGatewayClient', () => {
     mockConfig.openclaw.gatewayUrl = 'http://test-gateway:18789';
     mockConfig.openclaw.gatewayToken = null;
     mockConfig.openclaw.gatewayTimeoutMs = 15000;
-    mockConfig.openclaw.device.id = null;
-    mockConfig.openclaw.device.publicKey = null;
-    mockConfig.openclaw.device.privateKey = null;
-    mockConfig.openclaw.device.token = null;
 
     // Reset WebSocket mock
     mockWebSocket.send.mockClear();
@@ -123,63 +124,6 @@ describe('openclawGatewayClient', () => {
 
   afterEach(() => {
     jest.useRealTimers();
-  });
-
-  describe('getDeviceAuthConfig()', () => {
-    it('should return null when device auth is not configured', () => {
-      expect(getDeviceAuthConfig()).toBeNull();
-    });
-
-    it('should return null when deviceId is missing', () => {
-      mockConfig.openclaw.device.publicKey = 'test-public-key';
-      mockConfig.openclaw.device.privateKey = 'fake_private_key_for_testing';
-      mockConfig.openclaw.device.token = 'test-token';
-      expect(getDeviceAuthConfig()).toBeNull();
-    });
-
-    it('should return null when publicKey is missing', () => {
-      mockConfig.openclaw.device.id = 'test-device-id';
-      mockConfig.openclaw.device.privateKey = 'fake_private_key_for_testing';
-      mockConfig.openclaw.device.token = 'test-token';
-      expect(getDeviceAuthConfig()).toBeNull();
-    });
-
-    it('should return null when privateKey is missing', () => {
-      mockConfig.openclaw.device.id = 'test-device-id';
-      mockConfig.openclaw.device.publicKey = 'test-public-key';
-      mockConfig.openclaw.device.token = 'test-token';
-      expect(getDeviceAuthConfig()).toBeNull();
-    });
-
-    it('should return null when token is missing', () => {
-      mockConfig.openclaw.device.id = 'test-device-id';
-      mockConfig.openclaw.device.publicKey = 'test-public-key';
-      mockConfig.openclaw.device.privateKey = 'fake_private_key_for_testing';
-      expect(getDeviceAuthConfig()).toBeNull();
-    });
-
-    it('should return device auth config when all fields are present', () => {
-      const crypto = require('crypto');
-      const keyPair = crypto.generateKeyPairSync('ed25519');
-      const privateKeyDer = keyPair.privateKey.export({ format: 'der', type: 'pkcs8' });
-      const privateKeyBytes = privateKeyDer.slice(16);
-      const privateKeyB64 = privateKeyBytes.toString('base64url');
-      const publicKeyDer = keyPair.publicKey.export({ format: 'der', type: 'spki' });
-      const publicKeyBytes = publicKeyDer.slice(12);
-      const publicKeyB64 = publicKeyBytes.toString('base64url');
-
-      mockConfig.openclaw.device.id = 'test-device-id';
-      mockConfig.openclaw.device.publicKey = publicKeyB64;
-      mockConfig.openclaw.device.privateKey = privateKeyB64; // gitleaks:allow // fake private key for tests
-      mockConfig.openclaw.device.token = 'test-token';
-
-      const config = getDeviceAuthConfig();
-      expect(config).not.toBeNull();
-      expect(config.deviceId).toBe('test-device-id');
-      expect(config.publicKey).toBe(publicKeyB64);
-      expect(config.deviceToken).toBe('test-token');
-      expect(config.privateKey).toBeDefined();
-    });
   });
 
   describe('buildDeviceConnectPayload()', () => {
@@ -209,7 +153,7 @@ describe('openclawGatewayClient', () => {
         client: {
           id: 'openclaw-control-ui',
           version: 'server',
-          platform: 'node',
+          platform: process.platform || 'node',
           mode: 'webchat',
         },
         role: 'operator',
@@ -1124,41 +1068,6 @@ Line 2"}`;
     });
   });
 
-  describe('warnIfDeviceAuthNotConfigured()', () => {
-    it('should not warn when gatewayUrl is not set', () => {
-      mockConfig.openclaw.gatewayUrl = null;
-      warnIfDeviceAuthNotConfigured();
-      expect(logger.info).not.toHaveBeenCalled();
-    });
-
-    it('should warn when device auth vars are missing', () => {
-      mockConfig.openclaw.gatewayUrl = 'http://test';
-      mockConfig.openclaw.device.id = null;
-      warnIfDeviceAuthNotConfigured();
-      expect(logger.info).toHaveBeenCalledWith(
-        expect.stringContaining('OpenClaw device auth not configured'),
-        expect.objectContaining({
-          missingVars: expect.arrayContaining(['OPENCLAW_DEVICE_ID']),
-        }),
-      );
-    });
-
-    it('should log info when device auth is configured', () => {
-      mockConfig.openclaw.gatewayUrl = 'http://test';
-      mockConfig.openclaw.device.id = 'test-device';
-      mockConfig.openclaw.device.publicKey = 'test-public';
-      mockConfig.openclaw.device.privateKey = 'test-private';
-      mockConfig.openclaw.device.token = 'test-token';
-      warnIfDeviceAuthNotConfigured();
-      expect(logger.info).toHaveBeenCalledWith(
-        'OpenClaw device auth configured',
-        expect.objectContaining({
-          deviceId: 'test-device',
-        }),
-      );
-    });
-  });
-
   describe('sleep()', () => {
     it('should resolve after specified milliseconds', async () => {
       const promise = sleep(1000);
@@ -1168,65 +1077,27 @@ Line 2"}`;
   });
 
   describe('WebSocket RPC flows', () => {
-    it('should call sessions.list via allowInsecureAuth flow', async () => {
-      jest.useRealTimers(); // Use real timers for WebSocket tests
-      const sessionsPayload = { sessions: [{ id: 's1' }] };
-      mockConfig.openclaw.device.id = null;
-
-      mockWebSocket.send.mockImplementation((payload) => {
-        const message = JSON.parse(payload);
-        if (message.method === 'connect') {
-          originalSetTimeout(() => {
-            emitWs(
-              'message',
-              JSON.stringify({ type: 'res', id: message.id, ok: true, payload: {} }),
-            );
-          }, 0);
-          return;
-        }
-        if (message.method === 'sessions.list') {
-          originalSetTimeout(() => {
-            emitWs(
-              'message',
-              JSON.stringify({
-                type: 'res',
-                id: message.id,
-                ok: true,
-                payload: sessionsPayload,
-              }),
-            );
-          }, 0);
-        }
+    it('should require device auth for sessions.list websocket RPCs', async () => {
+      await expect(
+        sessionsListAllViaWs({
+          includeGlobal: true,
+          includeUnknown: false,
+          activeMinutes: 10,
+          limit: 20,
+          messageLimit: 5,
+        }),
+      ).rejects.toMatchObject({
+        status: 503,
+        code: 'DEVICE_AUTH_REQUIRED',
       });
 
-      const promise = sessionsListAllViaWs({
-        includeGlobal: true,
-        includeUnknown: false,
-        activeMinutes: 10,
-        limit: 20,
-        messageLimit: 5,
-      });
-
-      emitWs('open');
-      await expect(promise).resolves.toEqual(sessionsPayload);
-      expect(mockWebSocket.close).toHaveBeenCalled();
+      expect(mockWebSocket.on).not.toHaveBeenCalled();
+      expect(mockWebSocket.send).not.toHaveBeenCalled();
     });
 
     it('should call chat.history via device-auth challenge flow', async () => {
       jest.useRealTimers(); // Use real timers for WebSocket tests
-      const crypto = require('crypto');
-      const keyPair = crypto.generateKeyPairSync('ed25519');
-      const privateKeyDer = keyPair.privateKey.export({ format: 'der', type: 'pkcs8' });
-      const privateKeyBytes = privateKeyDer.slice(16);
-      const privateKeyB64 = privateKeyBytes.toString('base64url');
-      const publicKeyDer = keyPair.publicKey.export({ format: 'der', type: 'spki' });
-      const publicKeyBytes = publicKeyDer.slice(12);
-      const publicKeyB64 = publicKeyBytes.toString('base64url');
-
-      mockConfig.openclaw.device.id = 'device-1';
-      mockConfig.openclaw.device.publicKey = publicKeyB64;
-      mockConfig.openclaw.device.privateKey = privateKeyB64; // gitleaks:allow // fake private key for tests
-      mockConfig.openclaw.device.token = 'device-token';
+      const deviceAuth = configureDeviceAuth();
 
       mockWebSocket.send.mockImplementation((payload) => {
         const message = JSON.parse(payload);
@@ -1254,7 +1125,11 @@ Line 2"}`;
         }
       });
 
-      const promise = sessionsHistoryViaWs({ sessionKey: 'agent:coo:subagent:uuid', limit: 50 });
+      const promise = openclawGatewayClient.gatewayWsRpc(
+        'chat.history',
+        { sessionKey: 'agent:coo:subagent:uuid', limit: 50 },
+        { deviceAuth },
+      );
       emitWs('open');
       emitWs(
         'message',
@@ -1276,8 +1151,10 @@ Line 2"}`;
     it('should reject with SERVICE_TIMEOUT when websocket RPC times out', (done) => {
       jest.useRealTimers(); // Use real timers for WebSocket timeout test
       mockConfig.openclaw.gatewayTimeoutMs = 50; // Small timeout for faster test
+      const deviceAuth = configureDeviceAuth();
 
-      sessionsListAllViaWs()
+      openclawGatewayClient
+        .gatewayWsRpc('sessions.list', {}, { deviceAuth })
         .then(() => {
           done.fail('Expected promise to be rejected');
         })
@@ -1299,7 +1176,8 @@ Line 2"}`;
 
     it('should reject with SERVICE_UNAVAILABLE on websocket error', async () => {
       jest.useRealTimers(); // Use real timers for WebSocket tests
-      const promise = sessionsListAllViaWs();
+      const deviceAuth = configureDeviceAuth();
+      const promise = openclawGatewayClient.gatewayWsRpc('sessions.list', {}, { deviceAuth });
       emitWs('error', new Error('connection failed'));
 
       await expect(promise).rejects.toMatchObject({
@@ -1308,13 +1186,46 @@ Line 2"}`;
       });
     });
 
+    it('should send an http Origin header for ws gateway URLs', async () => {
+      jest.useRealTimers();
+      const WebSocket = require('ws');
+      const deviceAuth = configureDeviceAuth();
+
+      const promise = openclawGatewayClient.gatewayWsRpc('sessions.list', {}, { deviceAuth });
+
+      expect(WebSocket).toHaveBeenCalledWith(
+        'ws://test-gateway:18789',
+        expect.objectContaining({
+          headers: expect.objectContaining({
+            Origin: 'http://test-gateway:18789',
+            Host: 'test-gateway:18789',
+          }),
+        }),
+      );
+
+      emitWs('error', new Error('connection failed'));
+      await expect(promise).rejects.toMatchObject({
+        status: 503,
+        code: 'SERVICE_UNAVAILABLE',
+      });
+    });
+
     it('should reject pending requests when websocket closes early', async () => {
       jest.useRealTimers(); // Use real timers for WebSocket tests
+      const deviceAuth = configureDeviceAuth();
       mockWebSocket.send.mockImplementation(() => {
         // Keep connect pending to exercise close handler rejection path.
       });
-      const promise = sessionsListAllViaWs();
+      const promise = openclawGatewayClient.gatewayWsRpc('sessions.list', {}, { deviceAuth });
       emitWs('open');
+      emitWs(
+        'message',
+        JSON.stringify({
+          type: 'event',
+          event: 'connect.challenge',
+          payload: { nonce: 'nonce-123' },
+        }),
+      );
       emitWs('close', 1006, 'abnormal');
 
       await expect(promise).rejects.toThrow('WebSocket closed (1006): abnormal');

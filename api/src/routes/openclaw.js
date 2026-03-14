@@ -25,6 +25,7 @@ const {
   ensureProjectLinkIfMissing,
 } = require('../services/docsLinkReconciliationService');
 const { gatewayWsRpc, invokeTool } = require('../services/openclawGatewayClient');
+const { assertIntegrationReady } = require('../services/openclawIntegrationService');
 
 const BUILTIN_OPENCLAW_REMAP_PREFIXES = [
   '/home/node/.openclaw/workspace',
@@ -68,6 +69,33 @@ const requireAuth = (req, res, next) => {
       error: { message: 'Invalid or expired token', status: 401 },
     });
   }
+};
+
+const requireIntegrationReady = async (req, res, next) => {
+  try {
+    await assertIntegrationReady();
+    next();
+  } catch (error) {
+    if (error?.code === 'OPENCLAW_PAIRING_REQUIRED') {
+      return res.status(error.status || 503).json({
+        error: {
+          message: error.message,
+          status: error.status || 503,
+          code: error.code,
+          details: error.details,
+        },
+      });
+    }
+    return next(error);
+  }
+};
+
+const requireIntegrationReadyForPrivilegedUser = (req, res, next) => {
+  if (!req.user || !['admin', 'owner'].includes(req.user.role)) {
+    return next();
+  }
+
+  return requireIntegrationReady(req, res, next);
 };
 
 function hashApiKey(rawKey) {
@@ -1302,6 +1330,14 @@ registerOpenClawWorkspaceRoutes({
   isAllowedWorkspacePath,
   getAssignedProjectRootPaths,
 });
+
+// Wizard-first pairing gate: lock OpenClaw-dependent routes until integration is ready.
+// Keep auth first so unauthenticated requests still return 401/403 semantics.
+router.use(
+  ['/projects', '/sessions', '/cron-jobs', '/usage'],
+  requireAuth,
+  requireIntegrationReadyForPrivilegedUser,
+);
 
 // GET /api/v1/openclaw/projects
 // List project registry and assignment counts (admin/owner/agent read)
@@ -3211,30 +3247,6 @@ router.post(
         updatedFiles,
         warnings: setupWarnings,
         projectOnboarding,
-      },
-    });
-  } catch (error) {
-    next(error);
-  }
-});
-
-// GET /api/v1/openclaw/subagents
-// Runtime file integrations under /runtime/mosbot/* are retired.
-// This endpoint remains for compatibility and currently returns empty runtime arrays.
-router.get('/subagents', requireAuth, async (req, res, next) => {
-  try {
-    logger.info('Fetching subagent status', { userId: req.user.id });
-
-    const { getAllSubagents } = require('../services/subagentsRuntimeService');
-
-    // Fetch all subagents using runtime service
-    const { running, queued, completed } = await getAllSubagents();
-
-    res.json({
-      data: {
-        running,
-        queued,
-        completed,
       },
     });
   } catch (error) {

@@ -1,4 +1,5 @@
 import { Fragment, useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
 import Editor from '@monaco-editor/react';
 import { Dialog, Transition } from '@headlessui/react';
 import {
@@ -215,6 +216,7 @@ function HistoryDrawer({
 // Main page
 // ---------------------------------------------------------------------------
 export default function OpenClawConfigSettings() {
+  const navigate = useNavigate();
   const { user } = useAuthStore();
   const { showToast } = useToastStore();
   const fetchAgents = useAgentStore((state) => state.fetchAgents);
@@ -257,13 +259,19 @@ export default function OpenClawConfigSettings() {
       setBaseHash(data.hash);
       setIsDirty(false);
     } catch (err) {
+      const code = err?.response?.data?.error?.code;
+      if (code === 'OPENCLAW_PAIRING_REQUIRED') {
+        navigate('/settings/openclaw-pairing', { replace: true });
+        return;
+      }
+
       const msg = err.response?.data?.error?.message || err.message || 'Failed to load config';
       setLoadError(msg);
       logger.error('Failed to load OpenClaw config', { error: err.message });
     } finally {
       setIsLoading(false);
     }
-  }, []);
+  }, [navigate]);
 
   useEffect(() => {
     loadConfig();

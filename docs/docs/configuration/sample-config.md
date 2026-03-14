@@ -409,8 +409,7 @@ Bindings route messages to agents:
         "http://localhost:18789",
         "https://openclaw.example.com",
         "https://mosbot.example.com"
-      ],
-      "allowInsecureAuth": true
+      ]
     },
     "auth": {
       "mode": "token"

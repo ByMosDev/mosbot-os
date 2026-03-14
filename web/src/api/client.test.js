@@ -59,8 +59,6 @@ import {
   getModels,
   getAgents,
   getAgentsConfig,
-  getSubagents,
-  getActiveSubagentSessions,
   getCronJobs,
   getSchedulerStats,
   getCronJobRuns,
@@ -77,6 +75,9 @@ import {
   getUsageAnalytics,
   resetUsageData,
   resetActivityLogs,
+  getOpenClawIntegrationStatus,
+  startOpenClawPairing,
+  finalizeOpenClawPairing,
   getOpenClawConfig,
   updateOpenClawConfig,
   listOpenClawConfigBackups,
@@ -428,40 +429,6 @@ describe('api client', () => {
       await expect(getAgentsConfig()).resolves.toEqual({ root: 'ceo' });
       expect(api.get).toHaveBeenLastCalledWith('/openclaw/agents/config');
 
-      api.get.mockResolvedValueOnce({ data: { data: { running: [] } } });
-      await expect(getSubagents()).resolves.toEqual({ running: [] });
-      expect(api.get).toHaveBeenLastCalledWith('/openclaw/subagents');
-    });
-
-    it('normalizes active subagent sessions from running and queued lists', async () => {
-      api.get.mockResolvedValueOnce({
-        data: {
-          data: {
-            running: [
-              { sessionLabel: 'agent:coo:main', taskId: 't1', startedAt: '2026-01-01T00:00:00Z' },
-            ],
-            queued: [
-              { label: 'agent:cto:main', status: 'QUEUED', queuedAt: '2026-01-01T00:10:00Z' },
-            ],
-          },
-        },
-      });
-
-      const sessions = await getActiveSubagentSessions();
-      expect(sessions).toEqual([
-        expect.objectContaining({
-          label: 'agent:coo:main',
-          status: 'running',
-          taskId: 't1',
-          startedAt: '2026-01-01T00:00:00Z',
-        }),
-        expect.objectContaining({
-          label: 'agent:cto:main',
-          status: 'queued',
-          taskId: null,
-          startedAt: '2026-01-01T00:10:00Z',
-        }),
-      ]);
     });
 
     it('handles cron jobs and scheduler endpoints', async () => {
@@ -594,6 +561,23 @@ describe('api client', () => {
       api.post.mockResolvedValueOnce({ data: { data: { success: true } } });
       await expect(resetActivityLogs('pw')).resolves.toEqual({ success: true });
       expect(api.post).toHaveBeenLastCalledWith('/activity/reset', { password: 'pw' });
+
+      api.get.mockResolvedValueOnce({ data: { data: { ready: false, status: 'pending_pairing' } } });
+      await expect(getOpenClawIntegrationStatus()).resolves.toEqual({
+        ready: false,
+        status: 'pending_pairing',
+      });
+      expect(api.get).toHaveBeenLastCalledWith('/openclaw/integration/status', { timeout: 30000 });
+
+      api.post.mockResolvedValueOnce({ data: { data: { status: 'pending_pairing' } } });
+      await expect(startOpenClawPairing()).resolves.toEqual({ status: 'pending_pairing' });
+      expect(api.post).toHaveBeenLastCalledWith('/openclaw/integration/pairing/start', {}, { timeout: 30000 });
+
+      api.post.mockResolvedValueOnce({ data: { data: { status: 'ready', ready: true } } });
+      await expect(finalizeOpenClawPairing()).resolves.toEqual({ status: 'ready', ready: true });
+      expect(api.post).toHaveBeenLastCalledWith('/openclaw/integration/pairing/finalize', {}, {
+        timeout: 30000,
+      });
 
       api.get.mockResolvedValueOnce({ data: { data: { raw: '{}' } } });
       await expect(getOpenClawConfig()).resolves.toEqual({ raw: '{}' });

@@ -538,8 +538,7 @@ Configures the OpenClaw gateway service.
     "mode": "local",
     "bind": "lan",
     "controlUi": {
-      "allowedOrigins": ["http://localhost:18789", "https://your-domain.example.com"],
-      "allowInsecureAuth": true
+      "allowedOrigins": ["http://localhost:18789", "https://your-domain.example.com"]
     },
     "auth": {
       "mode": "token"
@@ -552,24 +551,24 @@ Configures the OpenClaw gateway service.
 }
 ```
 
-| Field                         | Description                                                                                         |
-| ----------------------------- | --------------------------------------------------------------------------------------------------- |
-| `port`                        | Gateway port (default: `18789`)                                                                     |
-| `mode`                        | `local` for local/LAN operation                                                                     |
-| `bind`                        | `lan` to bind to all LAN interfaces                                                                 |
-| `controlUi.allowedOrigins`    | CORS allowed origins for the gateway UI — **must include your MosBot dashboard URL**                |
-| `controlUi.allowInsecureAuth` | Allow operator-scoped connections without device auth. Required when device auth is not configured. |
-| `auth.mode`                   | `token` for bearer token authentication                                                             |
-| `tls.enabled`                 | Enable TLS                                                                                          |
-| `tls.autoGenerate`            | Auto-generate a self-signed certificate                                                             |
+| Field                         | Description                                                                                           |
+| ----------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `port`                        | Gateway port (default: `18789`)                                                                       |
+| `mode`                        | `local` for local/LAN operation                                                                       |
+| `bind`                        | `lan` to bind to all LAN interfaces                                                                   |
+| `controlUi.allowedOrigins`    | CORS allowed origins for the gateway UI — **must include the gateway origin MosBot uses for pairing** |
+| `controlUi.allowInsecureAuth` | Legacy OpenClaw setting. MosBot no longer relies on this as a gateway RPC fallback.                   |
+| `auth.mode`                   | `token` for bearer token authentication                                                               |
+| `tls.enabled`                 | Enable TLS                                                                                            |
+| `tls.autoGenerate`            | Auto-generate a self-signed certificate                                                               |
 
 :::info MosBot Integration
 
 MosBot API connects to the gateway via WebSocket. For this to work:
 
-1. Add your MosBot dashboard URL to `controlUi.allowedOrigins`
-2. Either configure device auth credentials in MosBot API's `.env`, or set
-   `controlUi.allowInsecureAuth: true`
+1. Add the gateway origin MosBot will use to `controlUi.allowedOrigins`
+2. Configure `OPENCLAW_GATEWAY_URL` and `OPENCLAW_GATEWAY_TOKEN` in MosBot API
+3. Complete `Settings -> OpenClaw Pairing` as an `owner` or `admin`
 
 See [Key Settings for MosBot](./mosbot-required-config) for details. :::
 

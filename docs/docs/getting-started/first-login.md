@@ -56,7 +56,7 @@ If you have team members who need access:
 
 See [Security → Roles & Permissions](../security/roles-permissions) for the full permissions matrix.
 
-## 5. Connect OpenClaw
+## 5. Connect OpenClaw and pair the device
 
 If you installed OpenClaw as recommended, add the integration variables to your `.env` to enable
 agent monitoring, workspace browsing, and agents page features:
@@ -74,6 +74,14 @@ Then restart the API:
 cd mosbot
 docker compose restart api
 ```
+
+After restart:
+
+1. Sign back in as an `owner` or `admin`
+2. Open **Settings -> OpenClaw Pairing**
+3. Click **Start pairing**
+4. Approve the pending MosBot device in OpenClaw
+5. Click **Finalize pairing**
 
 See [OpenClaw Integration](../openclaw/overview) for the full setup guide.
 

@@ -50,6 +50,20 @@ jest.mock('../../services/docsLinkReconciliationService', () => ({
   ensureProjectLinkIfMissing: jest.fn().mockResolvedValue({ action: 'unchanged' }),
 }));
 
+jest.mock('../../services/openclawIntegrationService', () => ({
+  REQUIRED_OPERATOR_SCOPES: [
+    'operator.admin',
+    'operator.approvals',
+    'operator.pairing',
+    'operator.read',
+    'operator.write',
+  ],
+  getIntegrationStatus: jest.fn(),
+  assertIntegrationReady: jest.fn(),
+  startPairing: jest.fn(),
+  finalizePairing: jest.fn(),
+}));
+
 const request = require('supertest');
 const express = require('express');
 const jwt = require('jsonwebtoken');
@@ -69,6 +83,12 @@ const {
   ensureDocsLinkIfMissing,
   ensureProjectLinkIfMissing,
 } = require('../../services/docsLinkReconciliationService');
+const {
+  getIntegrationStatus,
+  assertIntegrationReady,
+  startPairing,
+  finalizePairing,
+} = require('../../services/openclawIntegrationService');
 const bcrypt = require('bcrypt');
 
 // Helper to get JWT token for a user
@@ -118,6 +138,28 @@ describe('OpenClaw Routes', () => {
     cronList.mockResolvedValue([]);
     gatewayWsRpc.mockResolvedValue({});
     invokeTool.mockResolvedValue({ status: 'ok', reply: 'DONE', runId: 'run-1' });
+    getIntegrationStatus.mockResolvedValue({
+      status: 'ready',
+      ready: true,
+      requiredScopes: [
+        'operator.admin',
+        'operator.approvals',
+        'operator.pairing',
+        'operator.read',
+        'operator.write',
+      ],
+      grantedScopes: [
+        'operator.admin',
+        'operator.approvals',
+        'operator.pairing',
+        'operator.read',
+        'operator.write',
+      ],
+      missingScopes: [],
+    });
+    assertIntegrationReady.mockResolvedValue({ ready: true });
+    startPairing.mockResolvedValue({ status: 'pending_pairing', ready: false });
+    finalizePairing.mockResolvedValue({ status: 'ready', ready: true });
     sessionsListAllViaWs.mockResolvedValue([]);
     sessionsHistory.mockResolvedValue({ messages: [] });
     upsertSessionUsageBatch.mockResolvedValue(undefined);
@@ -2509,6 +2551,40 @@ describe('OpenClaw Routes', () => {
       expect(response.body.data).toHaveProperty('idle');
       expect(response.body.data).toHaveProperty('total');
     });
+
+    it('should return pairing-required when integration is not ready', async () => {
+      const token = getToken('admin-id', 'admin');
+      const err = new Error('OpenClaw pairing is required before using this feature. Complete the pairing wizard first.');
+      err.status = 503;
+      err.code = 'OPENCLAW_PAIRING_REQUIRED';
+      err.details = { status: 'pending_pairing', missingScopes: ['operator.read'] };
+      assertIntegrationReady.mockRejectedValueOnce(err);
+
+      const response = await request(app)
+        .get('/api/v1/openclaw/sessions/status')
+        .set('Authorization', `Bearer ${token}`);
+
+      expect(response.status).toBe(503);
+      expect(response.body.error.code).toBe('OPENCLAW_PAIRING_REQUIRED');
+    });
+
+    it('should not apply the pairing gate to regular users', async () => {
+      const token = getToken('user-id', 'user');
+      const err = new Error('OpenClaw pairing is required before using this feature. Complete the pairing wizard first.');
+      err.status = 503;
+      err.code = 'OPENCLAW_PAIRING_REQUIRED';
+      err.details = { status: 'pending_pairing', missingScopes: ['operator.read'] };
+      assertIntegrationReady.mockRejectedValue(err);
+
+      const response = await request(app)
+        .get('/api/v1/openclaw/sessions/status')
+        .set('Authorization', `Bearer ${token}`);
+
+      expect(response.status).toBe(200);
+      expect(assertIntegrationReady).not.toHaveBeenCalled();
+      assertIntegrationReady.mockReset();
+      assertIntegrationReady.mockResolvedValue({ ready: true });
+    });
   });
 
   describe('GET /api/v1/openclaw/sessions', () => {
@@ -2809,6 +2885,77 @@ describe('OpenClaw Routes', () => {
     });
   });
 
+  describe('GET /api/v1/openclaw/integration/status', () => {
+    it('returns integration readiness for authenticated users', async () => {
+      const token = getToken('admin-id', 'admin');
+      getIntegrationStatus.mockResolvedValueOnce({
+        status: 'pending_pairing',
+        ready: false,
+        requiredScopes: [
+          'operator.admin',
+          'operator.approvals',
+          'operator.pairing',
+          'operator.read',
+          'operator.write',
+        ],
+        grantedScopes: ['operator.admin'],
+        missingScopes: ['operator.read', 'operator.write', 'operator.approvals', 'operator.pairing'],
+      });
+
+      const response = await request(app)
+        .get('/api/v1/openclaw/integration/status')
+        .set('Authorization', `Bearer ${token}`);
+
+      expect(response.status).toBe(200);
+      expect(response.body.data).toEqual(
+        expect.objectContaining({
+          status: 'pending_pairing',
+          ready: false,
+        }),
+      );
+    });
+
+    it('denies regular users from integration readiness details', async () => {
+      const token = getToken('user-id', 'user');
+
+      const response = await request(app)
+        .get('/api/v1/openclaw/integration/status')
+        .set('Authorization', `Bearer ${token}`);
+
+      expect(response.status).toBe(403);
+    });
+  });
+
+  describe('POST /api/v1/openclaw/integration/pairing/start', () => {
+    it('starts pairing for admin/owner users', async () => {
+      const token = getToken('admin-id', 'admin');
+      startPairing.mockResolvedValueOnce({ status: 'pending_pairing', ready: false });
+
+      const response = await request(app)
+        .post('/api/v1/openclaw/integration/pairing/start')
+        .set('Authorization', `Bearer ${token}`)
+        .send({});
+
+      expect(response.status).toBe(201);
+      expect(response.body.data).toEqual(expect.objectContaining({ status: 'pending_pairing' }));
+    });
+  });
+
+  describe('POST /api/v1/openclaw/integration/pairing/finalize', () => {
+    it('finalizes pairing for admin/owner users', async () => {
+      const token = getToken('owner-id', 'owner');
+      finalizePairing.mockResolvedValueOnce({ status: 'ready', ready: true });
+
+      const response = await request(app)
+        .post('/api/v1/openclaw/integration/pairing/finalize')
+        .set('Authorization', `Bearer ${token}`)
+        .send({});
+
+      expect(response.status).toBe(200);
+      expect(response.body.data).toEqual(expect.objectContaining({ status: 'ready', ready: true }));
+    });
+  });
+
   describe('GET /api/v1/openclaw/config', () => {
     beforeEach(() => {
       gatewayWsRpc.mockResolvedValue({
@@ -2841,6 +2988,22 @@ describe('OpenClaw Routes', () => {
         .set('Authorization', `Bearer ${token}`);
 
       expect(response.status).toBe(200);
+    });
+
+    it('should return pairing-required when integration is not ready', async () => {
+      const token = getToken('admin-id', 'admin');
+      const err = new Error('OpenClaw pairing is required before using this feature. Complete the pairing wizard first.');
+      err.status = 503;
+      err.code = 'OPENCLAW_PAIRING_REQUIRED';
+      err.details = { status: 'pending_pairing', missingScopes: ['operator.read'] };
+      assertIntegrationReady.mockRejectedValueOnce(err);
+
+      const response = await request(app)
+        .get('/api/v1/openclaw/config')
+        .set('Authorization', `Bearer ${token}`);
+
+      expect(response.status).toBe(503);
+      expect(response.body.error.code).toBe('OPENCLAW_PAIRING_REQUIRED');
     });
 
     it('should deny regular users from getting config', async () => {

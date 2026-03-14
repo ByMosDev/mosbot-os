@@ -18,7 +18,7 @@ basic task management and user management. With OpenClaw connected, you get:
 
 | Feature                              | Requires          |
 | ------------------------------------ | ----------------- |
-| Agent Monitor (live sessions, costs) | Gateway           |
+| Agent Monitor (live sessions, costs) | Gateway + pairing |
 | Agents (agent visualization)         | Workspace service |
 | Workspace file browser               | Workspace service |
 | Skills management                    | Workspace service |
@@ -53,6 +53,9 @@ it to:
 - Retrieve session costs and token usage
 - Invoke tools and send messages
 - Access real-time agent status
+
+Gateway-backed features are unlocked after an `owner` or `admin` completes the MosBot pairing
+wizard.
 
 ## Architecture
 

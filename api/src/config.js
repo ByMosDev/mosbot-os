@@ -59,20 +59,6 @@ const config = {
       // For config tests (when USE_STANDARD_CONFIG_VALUES is true) or production, use standard value
       return parseInt(process.env.OPENCLAW_GATEWAY_TIMEOUT_MS || '15000', 10); // 15 seconds in prod/config tests
     },
-    device: {
-      get id() {
-        return process.env.OPENCLAW_DEVICE_ID || null;
-      },
-      get publicKey() {
-        return process.env.OPENCLAW_DEVICE_PUBLIC_KEY || null;
-      },
-      get privateKey() {
-        return process.env.OPENCLAW_DEVICE_PRIVATE_KEY || null;
-      },
-      get token() {
-        return process.env.OPENCLAW_DEVICE_TOKEN || null;
-      },
-    },
     get workspaceToken() {
       return process.env.OPENCLAW_WORKSPACE_TOKEN || null;
     },
