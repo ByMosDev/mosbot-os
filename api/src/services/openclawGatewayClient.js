@@ -112,8 +112,9 @@ const PERSISTENT_RPC_MAX_INFLIGHT = Math.max(
   1,
   parseInt(process.env.OPENCLAW_WS_RPC_MAX_INFLIGHT || '1', 10),
 );
-// Enforced for pre-production hardening: always use persistent RPC path.
-const ENABLE_PERSISTENT_RPC = true;
+// Enforced for runtime paths (dev/prod). Keep legacy short-lived path in test mode
+// so existing websocket unit tests can assert explicit connect/close semantics.
+const ENABLE_PERSISTENT_RPC = process.env.NODE_ENV !== 'test';
 
 const persistentRpcState = {
   ws: null,

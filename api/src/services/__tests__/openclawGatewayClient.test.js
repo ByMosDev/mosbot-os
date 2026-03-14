@@ -1148,30 +1148,16 @@ Line 2"}`;
       await expect(sessionsHistoryViaWs()).rejects.toThrow('sessionKey is required');
     });
 
-    it('should reject with SERVICE_TIMEOUT when websocket RPC times out', (done) => {
+    it('should reject with SERVICE_TIMEOUT when websocket RPC times out', async () => {
       jest.useRealTimers(); // Use real timers for WebSocket timeout test
       mockConfig.openclaw.gatewayTimeoutMs = 50; // Small timeout for faster test
       const deviceAuth = configureDeviceAuth();
 
-      openclawGatewayClient
-        .gatewayWsRpc('sessions.list', {}, { deviceAuth })
-        .then(() => {
-          done.fail('Expected promise to be rejected');
-        })
-        .catch((error) => {
-          try {
-            expect(error).toMatchObject({
-              status: 503,
-              code: 'SERVICE_TIMEOUT',
-            });
-            expect(mockWebSocket.close).toHaveBeenCalled();
-            done();
-          } catch (assertionError) {
-            done.fail(assertionError);
-          }
-        });
-
-      // The timeout will occur automatically based on the configured gatewayTimeoutMs
+      await expect(openclawGatewayClient.gatewayWsRpc('sessions.list', {}, { deviceAuth })).rejects.toMatchObject({
+        status: 503,
+        code: 'SERVICE_TIMEOUT',
+      });
+      expect(mockWebSocket.close).toHaveBeenCalled();
     }, 10000);
 
     it('should reject with SERVICE_UNAVAILABLE on websocket error', async () => {
