@@ -426,7 +426,7 @@ if [[ -z "\${MOSBOT_API_URL:-}" ]]; then
   exit 1
 fi
 
-TOKEN="$("\${SCRIPT_DIR}/mosbot-auth")"
+TOKEN="$(bash "\${SCRIPT_DIR}/mosbot-auth")"
 AUTH_HEADER="Authorization: Bearer \${TOKEN}"
 
 usage() {
