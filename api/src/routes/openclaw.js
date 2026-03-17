@@ -5,6 +5,7 @@ const crypto = require('crypto');
 const config = require('../config');
 const logger = require('../utils/logger');
 const path = require('path');
+const fs = require('fs/promises');
 const pool = require('../db/pool');
 const { requireAdmin, requireManageUsers } = require('./auth');
 const {
@@ -254,6 +255,17 @@ async function upsertWorkspaceFile(path, content, encoding = 'utf8') {
       return makeOpenClawRequest('POST', '/files', { path, content, encoding });
     }
     throw error;
+  }
+}
+
+async function ensureExecutableMode(filePath) {
+  try {
+    await fs.chmod(filePath, 0o755);
+  } catch (error) {
+    logger.warn('Failed to set executable bit on workspace file (non-fatal)', {
+      path: filePath,
+      error: error.message,
+    });
   }
 }
 
@@ -572,13 +584,13 @@ This toolkit is generated into each agent workspace at \`./tools\`.
 
 1. Ensure \`mosbot.env\` exists in your workspace root.
 2. Export \`MOSBOT_ENV_FILE\` if your env file is in a non-default path.
-3. Use helper scripts directly:
+3. Use helper scripts directly (provisioned with executable permissions):
 
 \`\`\`bash
-bash ./tools/mosbot-task list --status "TO DO"
-bash ./tools/mosbot-task create "Example task" --priority "Medium"
-bash ./tools/mosbot-task update <task-id> --status "IN PROGRESS"
-bash ./tools/mosbot-task comment <task-id> "Progress note"
+./tools/mosbot-task list --status "TO DO"
+./tools/mosbot-task create "Example task" --priority "Medium"
+./tools/mosbot-task update <task-id> --status "IN PROGRESS"
+./tools/mosbot-task comment <task-id> "Progress note"
 \`\`\`
 `;
 
@@ -590,7 +602,7 @@ Local workspace notes for this agent.
 
 - \`./tools/mosbot-auth\`: Reads \`mosbot.env\` and returns a usable bearer token.
 - \`./tools/mosbot-task\`: Minimal task board CLI wrapper around \`/api/v1/tasks\` endpoints.
-- Run with \`bash ./tools/mosbot-task ...\` (workspace service writes files without executable bits).
+- Scripts are provisioned with \`+x\`, so run directly: \`./tools/mosbot-task ...\`.
 
 Default env file path: \`$PWD/mosbot.env\`.
 Override with: \`export MOSBOT_ENV_FILE=/path/to/mosbot.env\`.
@@ -604,11 +616,28 @@ Override with: \`export MOSBOT_ENV_FILE=/path/to/mosbot.env\`.
   ];
 }
 
+async function ensureToolkitExecutableBits(workspaceRoot) {
+  const executablePaths = [`${workspaceRoot}/tools/mosbot-auth`, `${workspaceRoot}/tools/mosbot-task`];
+
+  for (const scriptPath of executablePaths) {
+    try {
+      await fs.chmod(scriptPath, 0o755);
+    } catch (error) {
+      logger.warn('Failed to set executable bit on toolkit script', {
+        path: scriptPath,
+        error: error.message,
+      });
+    }
+  }
+}
+
 async function writeAgentToolkit(workspaceRoot) {
   const files = buildAgentToolkitFiles(workspaceRoot);
   for (const file of files) {
     await upsertWorkspaceFile(file.path, file.content);
   }
+
+  await ensureToolkitExecutableBits(workspaceRoot);
 }
 
 function buildAgentBootstrapContent(agentData = {}) {
