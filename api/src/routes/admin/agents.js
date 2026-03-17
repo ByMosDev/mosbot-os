@@ -113,6 +113,9 @@ async function archiveAgentWorkspace(agentId) {
     ? sourceListing.files.filter((entry) => entry?.type === 'file')
     : [];
 
+  let copiedCount = 0;
+  let skippedCount = 0;
+
   for (const file of files) {
     const sourcePath = String(file.path || '');
     if (!sourcePath.startsWith(sourceRoot)) continue;
@@ -120,16 +123,39 @@ async function archiveAgentWorkspace(agentId) {
     const relativePath = sourcePath.slice(sourceRoot.length);
     const targetPath = `${archiveRoot}${relativePath}`;
 
-    const fileData = await makeOpenClawRequest(
-      'GET',
-      `/files/content?path=${encodeURIComponent(sourcePath)}&encoding=base64`,
-    );
+    let fileData;
+    try {
+      fileData = await makeOpenClawRequest(
+        'GET',
+        `/files/content?path=${encodeURIComponent(sourcePath)}&encoding=base64`,
+      );
+    } catch (readError) {
+      if (readError?.status === 404 || readError?.status === 400) {
+        skippedCount += 1;
+        continue;
+      }
+      throw readError;
+    }
 
-    await makeOpenClawRequest('PUT', '/files', {
-      path: targetPath,
-      content: fileData?.content || '',
-      encoding: 'base64',
-    });
+    try {
+      await makeOpenClawRequest('POST', '/files', {
+        path: targetPath,
+        content: fileData?.content || '',
+        encoding: 'base64',
+      });
+    } catch (writeError) {
+      if (writeError?.status === 409) {
+        await makeOpenClawRequest('PUT', '/files', {
+          path: targetPath,
+          content: fileData?.content || '',
+          encoding: 'base64',
+        });
+      } else {
+        throw writeError;
+      }
+    }
+
+    copiedCount += 1;
   }
 
   await makeOpenClawRequest('DELETE', `/files?path=${encodeURIComponent(sourceRoot)}`);
@@ -140,6 +166,8 @@ async function archiveAgentWorkspace(agentId) {
     sourceRoot,
     archiveRoot,
     fileCount: files.length,
+    copiedCount,
+    skippedCount,
   };
 }
 
