@@ -89,7 +89,7 @@ function buildAgentWorkspacePath(agentId) {
 
 function buildWorkspaceArchivePath(agentId) {
   const stamp = new Date().toISOString().replace(/[:.]/g, '-');
-  return `/workspace/_archive/agents/${agentId}-${stamp}`;
+  return `/_archive/agents/${agentId}-${stamp}`;
 }
 
 async function archiveAgentWorkspace(agentId) {
