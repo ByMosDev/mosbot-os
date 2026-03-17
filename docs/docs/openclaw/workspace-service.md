@@ -117,8 +117,8 @@ Workspace service virtual paths are strict and allowlisted:
 - Config-root files: `/openclaw.json`, `/agents.json`
 - Shared dirs: `/projects/**`, `/skills/**`, `/docs/**`
 - Agent workspaces: `/workspace-<agent>/**`
-- Archive path (canonical): `/_archive/**`
-- Legacy archive path (read/write compatibility): `/_archived_workspace_main/**`
+- Archive path (canonical): `/_archived_workspace/**`
+- Legacy archive paths (read/write compatibility): `/_archive/**`, `/_archived_workspace_main/**`
 
 All other absolute virtual paths are denied with `403` and code `PATH_NOT_ALLOWED`. `/` is
 intentionally denied.

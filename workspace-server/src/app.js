@@ -9,7 +9,8 @@ const ALLOWED_CONFIG_PREFIXES = [
   "projects",
   "skills",
   "docs",
-  "_archive",
+  "_archived_workspace",
+  "_archive", // legacy
   "_archived_workspace_main", // legacy
 ];
 const WORKSPACE_AGENT_PATH_PATTERN = /^\/workspace-[^/]+(?:\/.*)?$/;

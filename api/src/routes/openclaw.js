@@ -1301,7 +1301,9 @@ function isAllowedWorkspacePath(workspacePath) {
   // Allow skills directory (moved from /shared/skills to /skills)
   if (workspacePath.startsWith('/skills/') || workspacePath === '/skills') return true;
 
-  // Allow archive paths (canonical + legacy alias)
+  // Allow archive paths (canonical + legacy aliases)
+  if (workspacePath === '/_archived_workspace' || workspacePath.startsWith('/_archived_workspace/'))
+    return true;
   if (workspacePath === '/_archive' || workspacePath.startsWith('/_archive/')) return true;
   if (
     workspacePath === '/_archived_workspace_main' ||

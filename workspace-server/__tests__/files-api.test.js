@@ -23,6 +23,9 @@ describe("Files API", () => {
     await fs.mkdir(path.join(configRoot, "projects"), { recursive: true });
     await fs.mkdir(path.join(configRoot, "skills"), { recursive: true });
     await fs.mkdir(path.join(configRoot, "docs"), { recursive: true });
+    await fs.mkdir(path.join(configRoot, "_archived_workspace"), {
+      recursive: true,
+    });
     await fs.mkdir(path.join(configRoot, "_archive"), { recursive: true });
     await fs.mkdir(path.join(configRoot, "_archived_workspace_main"), {
       recursive: true,
@@ -38,7 +41,7 @@ describe("Files API", () => {
     await fs.writeFile(path.join(configRoot, "skills", "skill.txt"), "skill");
     await fs.writeFile(path.join(configRoot, "docs", "readme.md"), "docs");
     await fs.writeFile(
-      path.join(configRoot, "_archive", "archived-new.txt"),
+      path.join(configRoot, "_archived_workspace", "archived-new.txt"),
       "new archive content",
     );
     await fs.writeFile(
@@ -120,10 +123,15 @@ describe("Files API", () => {
       expect(res.body.files.some((f) => f.name === "readme.md")).toBe(true);
     });
 
-    it("routes /_archive paths to config root", async () => {
-      const res = await request(app).get("/files?path=/_archive");
+    it("routes /_archived_workspace paths to config root", async () => {
+      const res = await request(app).get("/files?path=/_archived_workspace");
       expect(res.status).toBe(200);
       expect(res.body.files.some((f) => f.name === "archived-new.txt")).toBe(true);
+    });
+
+    it("routes /_archive paths to config root (legacy)", async () => {
+      const res = await request(app).get("/files?path=/_archive");
+      expect(res.status).toBe(200);
     });
 
     it("routes /_archived_workspace_main paths to config root", async () => {
@@ -215,7 +223,7 @@ describe("Files API", () => {
 
     it("returns content for canonical archived workspace files from config root", async () => {
       const res = await request(app).get(
-        "/files/content?path=/_archive/archived-new.txt",
+        "/files/content?path=/_archived_workspace/archived-new.txt",
       );
       expect(res.status).toBe(200);
       expect(res.body.content).toBe("new archive content");
