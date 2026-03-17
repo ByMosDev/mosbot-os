@@ -61,18 +61,15 @@ async function validateProjectContext(projectId, queryClient = pool) {
     return { ok: true };
   }
 
-  const projectResult = await queryClient.query(
-    `SELECT id, slug, name, root_path, contract_path, repo_url, docs_path, default_branch
-       FROM projects
-      WHERE id = $1`,
-    [projectId],
-  );
+  const projectResult = await queryClient.query('SELECT 1 FROM projects WHERE id = $1', [
+    projectId,
+  ]);
 
   if (projectResult.rows.length === 0) {
     return { ok: false, status: 400, message: 'Project not found' };
   }
 
-  return { ok: true, project: projectResult.rows[0] };
+  return { ok: true };
 }
 
 // Helper to log task events
@@ -251,9 +248,17 @@ router.get('/', optionalAuth, async (req, res, next) => {
     params.push(limitNum, offsetNum);
 
     const result = await pool.query(query, params);
+    const data = req.user
+      ? result.rows
+      : result.rows.map((row) => ({
+          ...row,
+          project_repo_url: null,
+          project_docs_path: null,
+          project_default_branch: null,
+        }));
 
     res.json({
-      data: result.rows,
+      data,
       pagination: {
         limit: limitNum,
         offset: offsetNum,

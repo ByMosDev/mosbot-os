@@ -1676,6 +1676,26 @@ router.put('/projects/:projectId', requireAuth, requireAdmin, async (req, res, n
         ? normalizeProjectContractPath(null, rootPath)
         : current.contract_path;
 
+    const normalizeNullableString = (value, fallback = null) => {
+      if (value === undefined) return fallback;
+      if (value === null) return null;
+      const trimmed = String(value).trim();
+      return trimmed.length > 0 ? trimmed : null;
+    };
+
+    const normalizedRepoUrl =
+      body.repoUrl === undefined
+        ? current.repo_url
+        : normalizeNullableString(body.repoUrl, current.repo_url);
+    const normalizedDocsPath =
+      body.docsPath === undefined
+        ? current.docs_path
+        : normalizeNullableString(body.docsPath, current.docs_path);
+    const normalizedDefaultBranch =
+      body.defaultBranch === undefined
+        ? current.default_branch || 'main'
+        : normalizeNullableString(body.defaultBranch, current.default_branch || 'main') || 'main';
+
     const result = await pool.query(
       `UPDATE projects
           SET slug = $2,
@@ -1698,9 +1718,9 @@ router.put('/projects/:projectId', requireAuth, requireAdmin, async (req, res, n
         body.description ?? current.description,
         rootPath,
         contractPath,
-        body.repoUrl ?? current.repo_url,
-        body.docsPath ?? current.docs_path,
-        body.defaultBranch ?? current.default_branch ?? 'main',
+        normalizedRepoUrl,
+        normalizedDocsPath,
+        normalizedDefaultBranch,
         body.status === 'archived' ? 'archived' : body.status === 'active' ? 'active' : current.status,
       ],
     );
