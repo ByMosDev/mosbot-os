@@ -337,6 +337,28 @@ describe("Files API", () => {
       expect(res.body.error).toBe("Invalid mode");
     });
 
+    it("returns 400 when mode type is unsupported", async () => {
+      const res = await request(app)
+        .post("/files")
+        .send({
+          path: "/workspace/bad-mode-type.sh",
+          content: "echo hi",
+          mode: { octal: "755" },
+        });
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe("Invalid mode");
+    });
+
+    it("returns 400 when numeric mode is out of range", async () => {
+      const res = await request(app).post("/files").send({
+        path: "/workspace/bad-mode-range.sh",
+        content: "echo hi",
+        mode: 0o1000,
+      });
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe("Invalid mode");
+    });
+
     it("returns 403 for disallowed create path", async () => {
       const res = await request(app).post("/files").send({
         path: "/tmp/new-file.txt",
@@ -418,6 +440,26 @@ describe("Files API", () => {
         path: "/workspace/updatable.txt",
         content: "x",
         mode: "invalid",
+      });
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe("Invalid mode");
+    });
+
+    it("returns 400 when mode type is unsupported", async () => {
+      const res = await request(app).put("/files").send({
+        path: "/workspace/updatable.txt",
+        content: "x",
+        mode: true,
+      });
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe("Invalid mode");
+    });
+
+    it("returns 400 when string mode is out of range", async () => {
+      const res = await request(app).put("/files").send({
+        path: "/workspace/updatable.txt",
+        content: "x",
+        mode: "1000",
       });
       expect(res.status).toBe(400);
       expect(res.body.error).toBe("Invalid mode");
