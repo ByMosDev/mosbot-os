@@ -444,17 +444,26 @@ export default function Agents() {
   let thirdLevelLeaders = [];
 
   if (hasReportsTo) {
-    // Use reportsTo to build tree
-    // Level 1: Leaders with no reportsTo (root nodes)
+    // Use reportsTo to build tree. The visual layout supports a single root card,
+    // so we keep one primary root (prefer main) and fan out all remaining/orphan
+    // leaders into level 3 so no agents disappear from the page.
     topLevelLeaders = leadership.filter((l) => !l.reportsTo);
+    topLevelLeaders.sort((a, b) => (a.id === 'main' ? -1 : b.id === 'main' ? 1 : 0));
 
-    // Level 2: Leaders who report to a Level 1 leader
-    const topIds = new Set(topLevelLeaders.map((l) => l.id));
-    secondLevelLeaders = leadership.filter((l) => topIds.has(l.reportsTo));
+    const primaryRoot = topLevelLeaders[0] || null;
+    if (primaryRoot) {
+      secondLevelLeaders = leadership.filter((l) => l.reportsTo === primaryRoot.id);
+      const secondIds = new Set(secondLevelLeaders.map((l) => l.id));
+      thirdLevelLeaders = leadership.filter((l) => secondIds.has(l.reportsTo));
+    }
 
-    // Level 3: Leaders who report to a Level 2 leader
-    const secondIds = new Set(secondLevelLeaders.map((l) => l.id));
-    thirdLevelLeaders = leadership.filter((l) => secondIds.has(l.reportsTo));
+    const accountedFor = new Set([
+      ...(topLevelLeaders[0] ? [topLevelLeaders[0].id] : []),
+      ...secondLevelLeaders.map((l) => l.id),
+      ...thirdLevelLeaders.map((l) => l.id),
+    ]);
+    const unplacedLeaders = leadership.filter((l) => !accountedFor.has(l.id));
+    thirdLevelLeaders = [...thirdLevelLeaders, ...unplacedLeaders];
   } else {
     // Flat leadership list — no hierarchy
     thirdLevelLeaders = leadership;
