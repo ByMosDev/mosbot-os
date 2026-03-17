@@ -902,7 +902,7 @@ describe('openclawGatewayClient', () => {
 
       expect(result).toEqual([{ id: '1' }, { id: '2' }]);
       expect(logger.info).toHaveBeenCalledWith(
-        'cron.list returned jobs via /tools/invoke',
+        expect.stringContaining('returned jobs via /tools/invoke'),
         expect.objectContaining({ count: 2 }),
       );
     });

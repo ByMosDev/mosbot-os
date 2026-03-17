@@ -616,13 +616,37 @@ async function sessionsHistory({ sessionKey, limit, includeTools } = {}) {
  * @returns {Promise<Array>} Array of cron job objects
  */
 async function cronList() {
-  // Attempt 1: Try cron.list via /tools/invoke
+  // Attempt 1: Try modern cron tool contract via /tools/invoke
+  // Tool schema: tool='cron' with args={ action: 'list', includeDisabled: true }
+  try {
+    const result = await invokeTool('cron', { action: 'list', includeDisabled: true });
+    if (result) {
+      const jobs = extractJobsArray(result);
+      if (jobs.length > 0) {
+        logger.info('cron list returned jobs via /tools/invoke (tool=cron)', {
+          count: jobs.length,
+        });
+        return jobs;
+      }
+    }
+  } catch (error) {
+    if (error.code === 'SERVICE_NOT_CONFIGURED' || error.code === 'SERVICE_UNAVAILABLE') {
+      logger.warn('OpenClaw gateway not available for cron list, returning empty array');
+      return [];
+    }
+    logger.warn('cron tool invocation failed, trying legacy cron.list', {
+      error: error.message,
+      code: error.code,
+    });
+  }
+
+  // Attempt 2: Backward-compatible legacy tool name
   try {
     const result = await invokeTool('cron.list', {});
     if (result) {
       const jobs = extractJobsArray(result);
       if (jobs.length > 0) {
-        logger.info('cron.list returned jobs via /tools/invoke', {
+        logger.info('cron.list returned jobs via /tools/invoke (legacy)', {
           count: jobs.length,
         });
         return jobs;
@@ -640,7 +664,7 @@ async function cronList() {
     });
   }
 
-  // Attempt 2: Read the persisted jobs.json from the workspace service
+  // Attempt 3: Read the persisted jobs.json from the workspace service
   // OpenClaw stores cron jobs at ~/.openclaw/cron/jobs.json on the gateway host.
   // In containerized setups this is typically at /home/node/.openclaw/cron/jobs.json
   // which may be accessible via the workspace service.
