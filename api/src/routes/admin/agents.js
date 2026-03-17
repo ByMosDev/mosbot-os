@@ -87,7 +87,16 @@ async function applyConfigWithRateLimitRetry({ raw, note, maxRetries = 1 }) {
   let attempt = 0;
   while (attempt <= maxRetries) {
     try {
-      return await gatewayWsRpc('config.apply', { raw, note });
+      const currentConfig = await gatewayWsRpc('config.get', {});
+      const baseHash = currentConfig?.hash || null;
+      if (!baseHash) {
+        const err = new Error('Unable to resolve config base hash from gateway');
+        err.status = 503;
+        err.code = 'CONFIG_HASH_UNAVAILABLE';
+        throw err;
+      }
+
+      return await gatewayWsRpc('config.apply', { raw, note, baseHash });
     } catch (error) {
       const retryAfterSeconds = parseRetryAfterSecondsFromError(error);
       const isRateLimit = Boolean(retryAfterSeconds);

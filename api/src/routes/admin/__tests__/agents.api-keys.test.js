@@ -192,7 +192,11 @@ describe('admin agents API key routes', () => {
     parseOpenClawConfig.mockReturnValue({ agents: { list: [{ id: 'coo' }] } });
 
     const rateLimitError = new Error('rate limit exceeded for config.apply; retry after 30s');
-    gatewayWsRpc.mockRejectedValue(rateLimitError);
+    gatewayWsRpc.mockImplementation(async (method) => {
+      if (method === 'config.get') return { hash: 'h1' };
+      if (method === 'config.apply') throw rateLimitError;
+      return { hash: 'h2' };
+    });
 
     const res = await request(app).delete('/api/v1/admin/agents/coo');
 
@@ -225,7 +229,7 @@ describe('admin agents API key routes', () => {
     expect(res.status).toBe(200);
     expect(gatewayWsRpc).toHaveBeenCalledWith(
       'config.apply',
-      expect.objectContaining({ note: expect.stringContaining('Delete agent coo') }),
+      expect.objectContaining({ note: expect.stringContaining('Delete agent coo'), baseHash: 'h2' }),
     );
     expect(res.body.data).toMatchObject({
       agentId: 'coo',
