@@ -9,15 +9,19 @@ import {
   PencilIcon,
   PlusIcon,
   ArrowPathIcon,
+  TrashIcon,
 } from '@heroicons/react/24/outline';
 import Header from '../components/Header';
 import {
   getAgentsConfig,
   rebootstrapAgent,
   syncAgentsFromOpenClaw,
+  deleteAgent,
 } from '../api/client';
 import { useAuthStore } from '../stores/authStore';
+import { useToastStore } from '../stores/toastStore';
 import AgentEditModal from '../components/AgentEditModal';
+import AgentDeleteConfirmModal from '../components/AgentDeleteConfirmModal';
 import logger from '../utils/logger';
 
 // Color palette for agent cards — assigned by hash of agent id
@@ -48,8 +52,12 @@ export default function Agents() {
   const [agentModalMode, setAgentModalMode] = useState('edit'); // 'edit' or 'create'
   const [isSyncingAgents, setIsSyncingAgents] = useState(false);
   const [rebootstrappingByAgentId, setRebootstrappingByAgentId] = useState({});
+  const [deleteTarget, setDeleteTarget] = useState(null);
+  const [isDeletingAgent, setIsDeletingAgent] = useState(false);
+  const [deleteError, setDeleteError] = useState('');
   const rebootstrappingRef = useRef(new Set());
   const { user } = useAuthStore();
+  const { showToast } = useToastStore();
   const canManageAgents = user?.role === 'admin' || user?.role === 'owner';
 
   // Fetch agents config
@@ -130,6 +138,38 @@ export default function Agents() {
     setSelectedAgentId(null);
     setAgentModalMode('create');
     setShowAgentModal(true);
+  };
+
+  const handleDeleteAgent = (agent) => {
+    if (!agent || agent.id === 'main') return;
+    setDeleteError('');
+    setDeleteTarget(agent);
+  };
+
+  const handleConfirmDeleteAgent = async ({ force = false } = {}) => {
+    if (!deleteTarget?.id) return;
+
+    setDeleteError('');
+    setIsDeletingAgent(true);
+    try {
+      const result = await deleteAgent(deleteTarget.id, { force });
+      await loadConfig();
+      setDeleteTarget(null);
+      setDeleteError('');
+
+      if (result?.alreadyDeleted) {
+        showToast(`${deleteTarget.id} was already removed`, 'success');
+      } else {
+        showToast(`Deleted ${deleteTarget.id}`, 'success');
+      }
+    } catch (err) {
+      logger.error('Failed to delete agent', { agentId: deleteTarget.id, error: err.message });
+      setDeleteError(
+        err?.response?.data?.error?.message || err.message || `Failed to delete ${deleteTarget.id}`,
+      );
+    } finally {
+      setIsDeletingAgent(false);
+    }
   };
 
   // Check if a node is active based on running sessions
@@ -255,6 +295,15 @@ export default function Agents() {
                     >
                       <PencilIcon className="w-3 h-3 text-dark-300" />
                     </button>
+                    {leader.id !== 'main' && (
+                      <button
+                        onClick={() => handleDeleteAgent(leader)}
+                        className="opacity-0 group-hover:opacity-100 transition-opacity h-[21px] px-1.5 bg-dark-800/70 hover:bg-red-800/60 rounded border border-dark-600 hover:border-red-500/60 flex items-center justify-center"
+                        title="Delete agent"
+                      >
+                        <TrashIcon className="w-3 h-3 text-red-300" />
+                      </button>
+                    )}
                   </>
                 )}
                 <StatusBadge status={status} />
@@ -393,19 +442,28 @@ export default function Agents() {
   let topLevelLeaders = [];
   let secondLevelLeaders = [];
   let thirdLevelLeaders = [];
+  let independentLeaders = [];
 
   if (hasReportsTo) {
-    // Use reportsTo to build tree
-    // Level 1: Leaders with no reportsTo (root nodes)
+    // Use reportsTo to build tree. The visual layout supports a single root card,
+    // so we keep one primary root (prefer main) and fan out all remaining/orphan
+    // leaders into level 3 so no agents disappear from the page.
     topLevelLeaders = leadership.filter((l) => !l.reportsTo);
+    topLevelLeaders.sort((a, b) => (a.id === 'main' ? -1 : b.id === 'main' ? 1 : 0));
 
-    // Level 2: Leaders who report to a Level 1 leader
-    const topIds = new Set(topLevelLeaders.map((l) => l.id));
-    secondLevelLeaders = leadership.filter((l) => topIds.has(l.reportsTo));
+    const primaryRoot = topLevelLeaders[0] || null;
+    if (primaryRoot) {
+      secondLevelLeaders = leadership.filter((l) => l.reportsTo === primaryRoot.id);
+      const secondIds = new Set(secondLevelLeaders.map((l) => l.id));
+      thirdLevelLeaders = leadership.filter((l) => secondIds.has(l.reportsTo));
+    }
 
-    // Level 3: Leaders who report to a Level 2 leader
-    const secondIds = new Set(secondLevelLeaders.map((l) => l.id));
-    thirdLevelLeaders = leadership.filter((l) => secondIds.has(l.reportsTo));
+    const accountedFor = new Set([
+      ...(topLevelLeaders[0] ? [topLevelLeaders[0].id] : []),
+      ...secondLevelLeaders.map((l) => l.id),
+      ...thirdLevelLeaders.map((l) => l.id),
+    ]);
+    independentLeaders = leadership.filter((l) => !accountedFor.has(l.id));
   } else {
     // Flat leadership list — no hierarchy
     thirdLevelLeaders = leadership;
@@ -459,6 +517,19 @@ export default function Agents() {
         onSave={handleAgentModalSave}
         agentId={selectedAgentId}
         mode={agentModalMode}
+      />
+
+      <AgentDeleteConfirmModal
+        isOpen={Boolean(deleteTarget)}
+        onClose={() => {
+          if (isDeletingAgent) return;
+          setDeleteError('');
+          setDeleteTarget(null);
+        }}
+        onConfirm={handleConfirmDeleteAgent}
+        agent={deleteTarget}
+        isSubmitting={isDeletingAgent}
+        errorMessage={deleteError}
       />
 
       <div className="flex-1 p-3 md:p-6 overflow-auto">
@@ -680,9 +751,24 @@ export default function Agents() {
                   </div>
                 )}
 
+                {/* Independent/orphan leaders (render without misleading connectors) */}
+                {independentLeaders.length > 0 && (
+                  <div className="mt-12">
+                    <h3 className="text-sm font-medium text-dark-400 mb-4 text-center">
+                      Independent agents
+                    </h3>
+                    <div className="flex flex-wrap justify-center gap-6">
+                      {independentLeaders.map((leader) => (
+                        <AgentCard key={leader.id} leader={leader} />
+                      ))}
+                    </div>
+                  </div>
+                )}
+
                 {/* Fallback: show all departments if no clear hierarchy */}
                 {thirdLevelLeaders.length === 0 &&
                   topLevelLeaders.length === 0 &&
+                  independentLeaders.length === 0 &&
                   departments.length > 0 && (
                     <div className="space-y-4">
                       <h2 className="text-xl font-bold text-dark-100 mb-4">Departments</h2>

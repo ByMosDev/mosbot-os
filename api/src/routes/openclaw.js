@@ -426,7 +426,7 @@ if [[ -z "\${MOSBOT_API_URL:-}" ]]; then
   exit 1
 fi
 
-TOKEN="$("\${SCRIPT_DIR}/mosbot-auth")"
+TOKEN="$(bash "\${SCRIPT_DIR}/mosbot-auth")"
 AUTH_HEADER="Authorization: Bearer \${TOKEN}"
 
 usage() {
@@ -1301,7 +1301,10 @@ function isAllowedWorkspacePath(workspacePath) {
   // Allow skills directory (moved from /shared/skills to /skills)
   if (workspacePath.startsWith('/skills/') || workspacePath === '/skills') return true;
 
-  // Allow legacy archived workspace path when present
+  // Allow archive paths (canonical + legacy aliases)
+  if (workspacePath === '/_archived_workspace' || workspacePath.startsWith('/_archived_workspace/'))
+    return true;
+  if (workspacePath === '/_archive' || workspacePath.startsWith('/_archive/')) return true;
   if (
     workspacePath === '/_archived_workspace_main' ||
     workspacePath.startsWith('/_archived_workspace_main/')

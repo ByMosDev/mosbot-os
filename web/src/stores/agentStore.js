@@ -8,7 +8,7 @@ const archivedAgent = {
   name: 'Archived',
   label: 'Archived (Old Main)',
   description: 'Archived workspace files from previous iteration',
-  workspaceRootPath: '/_archived_workspace_main',
+  workspaceRootPath: '/_archived_workspace',
   icon: '📦',
   isDefault: false,
 };

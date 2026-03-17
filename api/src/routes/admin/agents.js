@@ -2,11 +2,210 @@ const express = require('express');
 const crypto = require('crypto');
 const router = express.Router();
 const pool = require('../../db/pool');
+const logger = require('../../utils/logger');
 const { authenticateToken, requireManageUsers } = require('../auth');
 const { reconcileAgentsFromOpenClaw } = require('../../services/agentReconciliationService');
+const { makeOpenClawRequest } = require('../../services/openclawWorkspaceClient');
+const { gatewayWsRpc, sessionsListAllViaWs } = require('../../services/openclawGatewayClient');
+const { parseOpenClawConfig } = require('../../utils/configParser');
+const { recordActivityLogEventSafe } = require('../../services/activityLogService');
 
 router.use(authenticateToken);
 router.use(requireManageUsers);
+
+const AGENT_ID_REGEX = /^[a-z0-9_-]+$/;
+const ACTIVE_SESSION_WINDOW_MS = 30 * 60 * 1000;
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function parseBooleanParam(value) {
+  if (value === undefined || value === null || value === '') return false;
+  if (typeof value === 'boolean') return value;
+  const normalized = String(value).trim().toLowerCase();
+  if (['1', 'true', 'yes', 'on'].includes(normalized)) return true;
+  if (['0', 'false', 'no', 'off'].includes(normalized)) return false;
+  return null;
+}
+
+function extractSessionsArray(payload) {
+  if (!payload) return [];
+  if (Array.isArray(payload)) return payload;
+  if (Array.isArray(payload.sessions)) return payload.sessions;
+  if (Array.isArray(payload.rows)) return payload.rows;
+  if (payload.details && Array.isArray(payload.details.sessions)) return payload.details.sessions;
+  return [];
+}
+
+function getSessionAgentId(session) {
+  const key = String(session?.key || session?.sessionKey || '').trim();
+  if (!key) return null;
+
+  if (key === 'main') return 'main';
+
+  const parts = key.split(':');
+  if (parts.length >= 2 && parts[0] === 'agent') {
+    return parts[1] || null;
+  }
+
+  return null;
+}
+
+function toUpdatedAtMs(value) {
+  if (value == null) return null;
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+
+  const parsed = Date.parse(String(value));
+  if (!Number.isFinite(parsed)) return null;
+  return parsed;
+}
+
+function isActiveSession(session, nowMs = Date.now()) {
+  const status = String(session?.status || '').toLowerCase();
+  if (status === 'running' || status === 'active') return true;
+
+  const updatedAtMs = toUpdatedAtMs(
+    session?.updatedAt ?? session?.updated_at ?? session?.lastActivity ?? session?.last_activity,
+  );
+
+  // If timestamp is missing/invalid, fail closed to avoid accidental destructive deletes.
+  if (!updatedAtMs) return true;
+
+  return nowMs - updatedAtMs <= ACTIVE_SESSION_WINDOW_MS;
+}
+
+function parseRetryAfterSecondsFromError(error) {
+  const message = String(error?.message || '');
+  const match = message.match(/retry after\s+(\d+)s/i);
+  if (!match) return null;
+  const seconds = Number.parseInt(match[1], 10);
+  return Number.isFinite(seconds) && seconds > 0 ? seconds : null;
+}
+
+function buildAgentWorkspacePath(agentId) {
+  return `/workspace-${agentId}`;
+}
+
+function buildWorkspaceArchivePath(agentId) {
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  return `/_archived_workspace/agents/${agentId}-${stamp}`;
+}
+
+async function archiveAgentWorkspace(agentId) {
+  const sourceRoot = buildAgentWorkspacePath(agentId);
+  const archiveRoot = buildWorkspaceArchivePath(agentId);
+
+  let sourceListing;
+  try {
+    sourceListing = await makeOpenClawRequest(
+      'GET',
+      `/files?path=${encodeURIComponent(sourceRoot)}&recursive=true`,
+    );
+  } catch (error) {
+    if (error?.status === 404) {
+      return { archived: false, skipped: true, reason: 'workspace_not_found', sourceRoot };
+    }
+    throw error;
+  }
+
+  const files = Array.isArray(sourceListing?.files)
+    ? sourceListing.files.filter((entry) => entry?.type === 'file')
+    : [];
+
+  let copiedCount = 0;
+  let skippedCount = 0;
+
+  for (const file of files) {
+    const sourcePath = String(file.path || '');
+    if (!sourcePath.startsWith(sourceRoot)) continue;
+
+    const relativePath = sourcePath.slice(sourceRoot.length);
+    const targetPath = `${archiveRoot}${relativePath}`;
+
+    let fileData;
+    try {
+      fileData = await makeOpenClawRequest(
+        'GET',
+        `/files/content?path=${encodeURIComponent(sourcePath)}&encoding=base64`,
+      );
+    } catch (readError) {
+      if (readError?.status === 404 || readError?.status === 400) {
+        skippedCount += 1;
+        continue;
+      }
+      throw readError;
+    }
+
+    try {
+      await makeOpenClawRequest('POST', '/files', {
+        path: targetPath,
+        content: fileData?.content || '',
+        encoding: 'base64',
+      });
+    } catch (writeError) {
+      if (writeError?.status === 409) {
+        await makeOpenClawRequest('PUT', '/files', {
+          path: targetPath,
+          content: fileData?.content || '',
+          encoding: 'base64',
+        });
+      } else {
+        throw writeError;
+      }
+    }
+
+    copiedCount += 1;
+  }
+
+  await makeOpenClawRequest('DELETE', `/files?path=${encodeURIComponent(sourceRoot)}`);
+
+  return {
+    archived: true,
+    skipped: false,
+    sourceRoot,
+    archiveRoot,
+    fileCount: files.length,
+    copiedCount,
+    skippedCount,
+  };
+}
+
+async function applyConfigWithRateLimitRetry({ raw, note, maxRetries = 1 }) {
+  let attempt = 0;
+  while (attempt <= maxRetries) {
+    try {
+      const currentConfig = await gatewayWsRpc('config.get', {});
+      const baseHash = currentConfig?.hash || null;
+      if (!baseHash) {
+        const err = new Error('Unable to resolve config base hash from gateway');
+        err.status = 503;
+        err.code = 'CONFIG_HASH_UNAVAILABLE';
+        throw err;
+      }
+
+      return await gatewayWsRpc('config.apply', { raw, note, baseHash });
+    } catch (error) {
+      const retryAfterSeconds = parseRetryAfterSecondsFromError(error);
+      const isRateLimit = Boolean(retryAfterSeconds);
+      if (!isRateLimit || attempt >= maxRetries) {
+        if (isRateLimit) {
+          error.status = 429;
+          error.code = 'RATE_LIMITED';
+          error.retryAfterSeconds = retryAfterSeconds;
+        }
+        throw error;
+      }
+
+      logger.warn('config.apply rate-limited during agent delete; retrying', {
+        retryAfterSeconds,
+      });
+      const waitMs = process.env.NODE_ENV === 'test' ? 0 : retryAfterSeconds * 1000;
+      await sleep(waitMs);
+      attempt += 1;
+    }
+  }
+}
 
 // POST /api/v1/admin/agents/sync
 // Reconcile DB agents table with openclaw.json source-of-truth
@@ -71,10 +270,12 @@ router.post('/', async (req, res, next) => {
       });
     }
 
-    const slugRegex = /^[a-z0-9_-]+$/;
-    if (!slugRegex.test(agentId)) {
+    if (!AGENT_ID_REGEX.test(agentId)) {
       return res.status(400).json({
-        error: { message: 'agentId must be a valid slug (lowercase, alphanumeric, hyphens, underscores)', status: 400 },
+        error: {
+          message: 'agentId must be a valid slug (lowercase, alphanumeric, hyphens, underscores)',
+          status: 400,
+        },
       });
     }
 
@@ -85,7 +286,7 @@ router.post('/', async (req, res, next) => {
       });
     }
 
-    if (reportsTo && !slugRegex.test(reportsTo)) {
+    if (reportsTo && !AGENT_ID_REGEX.test(reportsTo)) {
       return res.status(400).json({
         error: { message: 'reportsTo must be a valid agentId slug', status: 400 },
       });
@@ -114,7 +315,11 @@ router.post('/', async (req, res, next) => {
 
     if (error.code === '23503') {
       return res.status(400).json({
-        error: { message: 'reportsTo must reference an existing agent_id', status: 400, code: 'INVALID_REPORTS_TO' },
+        error: {
+          message: 'reportsTo must reference an existing agent_id',
+          status: 400,
+          code: 'INVALID_REPORTS_TO',
+        },
       });
     }
 
@@ -125,6 +330,260 @@ router.post('/', async (req, res, next) => {
     }
 
     next(error);
+  }
+});
+
+// DELETE /api/v1/admin/agents/:agentId
+router.delete('/:agentId', async (req, res, next) => {
+  let client = null;
+  let transactionStarted = false;
+  try {
+    const { agentId } = req.params;
+    const force = parseBooleanParam(req.query.force ?? req.body?.force);
+
+    if (!AGENT_ID_REGEX.test(agentId)) {
+      return res.status(400).json({
+        error: {
+          message: 'agentId must be a valid slug (lowercase, alphanumeric, hyphens, underscores)',
+          status: 400,
+          code: 'INVALID_AGENT_ID',
+        },
+      });
+    }
+
+    if (force === null) {
+      return res.status(400).json({
+        error: {
+          message: 'force must be a boolean value',
+          status: 400,
+          code: 'INVALID_FORCE_PARAM',
+        },
+      });
+    }
+
+    if (agentId === 'main') {
+      return res.status(400).json({
+        error: {
+          message: 'The main agent cannot be deleted',
+          status: 400,
+          code: 'MAIN_AGENT_PROTECTED',
+        },
+      });
+    }
+
+    const configData = await makeOpenClawRequest('GET', '/files/content?path=/openclaw.json');
+    const openclawConfig = parseOpenClawConfig(configData.content);
+    if (!openclawConfig.agents) openclawConfig.agents = {};
+    const runtimeAgents = Array.isArray(openclawConfig.agents.list) ? openclawConfig.agents.list : [];
+    const runtimeAgentIndex = runtimeAgents.findIndex((agent) => agent?.id === agentId);
+
+    const sessionsPayload = await sessionsListAllViaWs({
+      includeGlobal: true,
+      includeUnknown: true,
+      activeMinutes: 0,
+      limit: 0,
+      messageLimit: 0,
+    });
+    const sessions = extractSessionsArray(sessionsPayload);
+    const matchingSessions = sessions.filter((session) => getSessionAgentId(session) === agentId);
+    const activeSessions = matchingSessions.filter((session) => isActiveSession(session));
+
+    if (activeSessions.length > 0 && !force) {
+      return res.status(409).json({
+        error: {
+          message: `Agent "${agentId}" has active sessions. Retry with force=true to proceed.`,
+          status: 409,
+          code: 'ACTIVE_SESSIONS_EXIST',
+        },
+        data: {
+          activeSessionsCount: activeSessions.length,
+          staleSessionsCount: Math.max(0, matchingSessions.length - activeSessions.length),
+          sessionKeys: activeSessions.slice(0, 10).map((s) => s.key || s.sessionKey || s.id).filter(Boolean),
+        },
+      });
+    }
+
+    let runtimeRemoved = false;
+    if (runtimeAgentIndex >= 0) {
+      const nextAgents = runtimeAgents.filter((agent) => agent?.id !== agentId);
+      const hasDefault = nextAgents.some((agent) => agent?.default === true);
+
+      if (nextAgents.length > 0 && !hasDefault) {
+        nextAgents[0] = { ...nextAgents[0], default: true };
+      }
+
+      openclawConfig.agents.list = nextAgents;
+      const openclawContent = JSON.stringify(openclawConfig, null, 2) + '\n';
+      try {
+        await applyConfigWithRateLimitRetry({
+          raw: openclawContent,
+          note: `Delete agent ${agentId} from runtime config`,
+        });
+      } catch (configApplyError) {
+        if (configApplyError?.code === 'RATE_LIMITED') {
+          if (configApplyError.retryAfterSeconds) {
+            res.set('Retry-After', String(configApplyError.retryAfterSeconds));
+          }
+          return res.status(429).json({
+            error: {
+              message: configApplyError.message,
+              status: 429,
+              code: 'RATE_LIMITED',
+              retryAfterSeconds: configApplyError.retryAfterSeconds || null,
+            },
+          });
+        }
+        throw configApplyError;
+      }
+      runtimeRemoved = true;
+    }
+
+    client = await pool.connect();
+    await client.query('BEGIN');
+    transactionStarted = true;
+
+    const existingAgent = await client.query(
+      'SELECT agent_id, status, active, reports_to FROM agents WHERE agent_id = $1 LIMIT 1 FOR UPDATE',
+      [agentId],
+    );
+
+    const existingAgentRow = existingAgent.rows[0] || null;
+    const dbAgentFound = Boolean(existingAgentRow);
+    const dbAlreadyDeprecated = Boolean(
+      existingAgentRow &&
+        existingAgentRow.status === 'deprecated' &&
+        existingAgentRow.active === false &&
+        !existingAgentRow.reports_to,
+    );
+
+    const clearedReportsToResult = await client.query(
+      `UPDATE agents
+       SET reports_to = NULL
+       WHERE reports_to = $1`,
+      [agentId],
+    );
+
+    const revokedKeysResult = await client.query(
+      `UPDATE agent_api_keys
+       SET revoked_at = NOW()
+       WHERE agent_id = $1 AND revoked_at IS NULL
+       RETURNING id`,
+      [agentId],
+    );
+
+    let removedAssignmentsResult = { rows: [] };
+    try {
+      removedAssignmentsResult = await client.query(
+        `DELETE FROM agent_project_assignments
+         WHERE agent_id = $1
+         RETURNING project_id`,
+        [agentId],
+      );
+    } catch (assignmentError) {
+      if (assignmentError.code !== '42P01') {
+        throw assignmentError;
+      }
+    }
+
+    const softDeleteResult = await client.query(
+      `UPDATE agents
+       SET status = 'deprecated', active = FALSE, reports_to = NULL
+       WHERE agent_id = $1
+         AND (status <> 'deprecated' OR active IS DISTINCT FROM FALSE OR reports_to IS NOT NULL)
+       RETURNING agent_id, status, active`,
+      [agentId],
+    );
+
+    await client.query('COMMIT');
+    transactionStarted = false;
+
+    const revokedKeys = revokedKeysResult.rows.length;
+    const removedAssignments = removedAssignmentsResult.rows.length;
+    const reportsToCleared = clearedReportsToResult.rowCount || 0;
+    const dbSoftDeleted = softDeleteResult.rows.length > 0;
+
+    let workspaceArchive = { archived: false, skipped: true, reason: 'not_attempted' };
+    try {
+      workspaceArchive = await archiveAgentWorkspace(agentId);
+    } catch (workspaceError) {
+      logger.warn('Agent workspace archive failed (non-fatal)', {
+        agentId,
+        error: workspaceError.message,
+      });
+      workspaceArchive = {
+        archived: false,
+        skipped: true,
+        reason: 'archive_failed',
+      };
+    }
+
+    const alreadyDeleted =
+      !runtimeRemoved &&
+      ((dbAgentFound && dbAlreadyDeprecated && !dbSoftDeleted) || !dbAgentFound) &&
+      revokedKeys === 0 &&
+      removedAssignments === 0 &&
+      reportsToCleared === 0;
+
+    try {
+      await reconcileAgentsFromOpenClaw({
+        trigger: 'agent_delete',
+        actorUserId: req.user.id,
+      });
+    } catch (reconcileError) {
+      logger.warn('Agent reconcile after delete failed (non-fatal)', {
+        agentId,
+        error: reconcileError.message,
+      });
+    }
+
+    recordActivityLogEventSafe({
+      event_type: 'agent_deleted',
+      source: 'org',
+      title: `Agent deleted: ${agentId}`,
+      description: `Agent "${agentId}" deleted by ${req.user.role}`,
+      severity: 'info',
+      actor_user_id: req.user.id,
+      agent_id: agentId,
+      meta: {
+        force,
+        alreadyDeleted,
+        runtimeRemoved,
+        dbSoftDeleted,
+        revokedKeys,
+        removedAssignments,
+        reportsToCleared,
+        activeSessionsCount: activeSessions.length,
+        staleSessionsCount: Math.max(0, matchingSessions.length - activeSessions.length),
+        workspaceArchive,
+      },
+    });
+
+    res.json({
+      data: {
+        agentId,
+        deleted: !alreadyDeleted,
+        alreadyDeleted,
+        runtimeRemoved,
+        dbSoftDeleted,
+        revokedKeys,
+        removedAssignments,
+        reportsToCleared,
+        activeSessionsCount: activeSessions.length,
+        staleSessionsCount: Math.max(0, matchingSessions.length - activeSessions.length),
+        workspaceArchive,
+      },
+    });
+  } catch (error) {
+    if (client && transactionStarted) {
+      try {
+        await client.query('ROLLBACK');
+      } catch (_rollbackError) {
+        // noop
+      }
+    }
+    next(error);
+  } finally {
+    if (client) client.release();
   }
 });
 
