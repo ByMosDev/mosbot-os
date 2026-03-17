@@ -83,6 +83,66 @@ function parseRetryAfterSecondsFromError(error) {
   return Number.isFinite(seconds) && seconds > 0 ? seconds : null;
 }
 
+function buildAgentWorkspacePath(agentId) {
+  return `/workspace-${agentId}`;
+}
+
+function buildWorkspaceArchivePath(agentId) {
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  return `/workspace/_archive/agents/${agentId}-${stamp}`;
+}
+
+async function archiveAgentWorkspace(agentId) {
+  const sourceRoot = buildAgentWorkspacePath(agentId);
+  const archiveRoot = buildWorkspaceArchivePath(agentId);
+
+  let sourceListing;
+  try {
+    sourceListing = await makeOpenClawRequest(
+      'GET',
+      `/files?path=${encodeURIComponent(sourceRoot)}&recursive=true`,
+    );
+  } catch (error) {
+    if (error?.status === 404) {
+      return { archived: false, skipped: true, reason: 'workspace_not_found', sourceRoot };
+    }
+    throw error;
+  }
+
+  const files = Array.isArray(sourceListing?.files)
+    ? sourceListing.files.filter((entry) => entry?.type === 'file')
+    : [];
+
+  for (const file of files) {
+    const sourcePath = String(file.path || '');
+    if (!sourcePath.startsWith(sourceRoot)) continue;
+
+    const relativePath = sourcePath.slice(sourceRoot.length);
+    const targetPath = `${archiveRoot}${relativePath}`;
+
+    const fileData = await makeOpenClawRequest(
+      'GET',
+      `/files/content?path=${encodeURIComponent(sourcePath)}&encoding=base64`,
+    );
+
+    await makeOpenClawRequest('PUT', '/files', {
+      path: targetPath,
+      content: fileData?.content || '',
+      encoding: 'base64',
+    });
+  }
+
+  await makeOpenClawRequest('DELETE', `/files?path=${encodeURIComponent(sourceRoot)}`);
+
+  return {
+    archived: true,
+    skipped: false,
+    sourceRoot,
+    archiveRoot,
+    fileCount: files.length,
+  };
+}
+
 async function applyConfigWithRateLimitRetry({ raw, note, maxRetries = 1 }) {
   let attempt = 0;
   while (attempt <= maxRetries) {
@@ -384,6 +444,21 @@ router.delete('/:agentId', async (req, res, next) => {
     const reportsToCleared = clearedReportsToResult.rowCount || 0;
     const dbSoftDeleted = softDeleteResult.rows.length > 0;
 
+    let workspaceArchive = { archived: false, skipped: true, reason: 'not_attempted' };
+    try {
+      workspaceArchive = await archiveAgentWorkspace(agentId);
+    } catch (workspaceError) {
+      logger.warn('Agent workspace archive failed (non-fatal)', {
+        agentId,
+        error: workspaceError.message,
+      });
+      workspaceArchive = {
+        archived: false,
+        skipped: true,
+        reason: 'archive_failed',
+      };
+    }
+
     const alreadyDeleted =
       !runtimeRemoved &&
       !dbAgentFound &&
@@ -421,6 +496,7 @@ router.delete('/:agentId', async (req, res, next) => {
         reportsToCleared,
         activeSessionsCount: activeSessions.length,
         staleSessionsCount: Math.max(0, matchingSessions.length - activeSessions.length),
+        workspaceArchive,
       },
     });
 
@@ -436,6 +512,7 @@ router.delete('/:agentId', async (req, res, next) => {
         reportsToCleared,
         activeSessionsCount: activeSessions.length,
         staleSessionsCount: Math.max(0, matchingSessions.length - activeSessions.length),
+        workspaceArchive,
       },
     });
   } catch (error) {
