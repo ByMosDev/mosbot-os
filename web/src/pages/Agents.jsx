@@ -442,6 +442,7 @@ export default function Agents() {
   let topLevelLeaders = [];
   let secondLevelLeaders = [];
   let thirdLevelLeaders = [];
+  let independentLeaders = [];
 
   if (hasReportsTo) {
     // Use reportsTo to build tree. The visual layout supports a single root card,
@@ -462,8 +463,7 @@ export default function Agents() {
       ...secondLevelLeaders.map((l) => l.id),
       ...thirdLevelLeaders.map((l) => l.id),
     ]);
-    const unplacedLeaders = leadership.filter((l) => !accountedFor.has(l.id));
-    thirdLevelLeaders = [...thirdLevelLeaders, ...unplacedLeaders];
+    independentLeaders = leadership.filter((l) => !accountedFor.has(l.id));
   } else {
     // Flat leadership list — no hierarchy
     thirdLevelLeaders = leadership;
@@ -751,9 +751,24 @@ export default function Agents() {
                   </div>
                 )}
 
+                {/* Independent/orphan leaders (render without misleading connectors) */}
+                {independentLeaders.length > 0 && (
+                  <div className="mt-12">
+                    <h3 className="text-sm font-medium text-dark-400 mb-4 text-center">
+                      Independent agents
+                    </h3>
+                    <div className="flex flex-wrap justify-center gap-6">
+                      {independentLeaders.map((leader) => (
+                        <AgentCard key={leader.id} leader={leader} />
+                      ))}
+                    </div>
+                  </div>
+                )}
+
                 {/* Fallback: show all departments if no clear hierarchy */}
                 {thirdLevelLeaders.length === 0 &&
                   topLevelLeaders.length === 0 &&
+                  independentLeaders.length === 0 &&
                   departments.length > 0 && (
                     <div className="space-y-4">
                       <h2 className="text-xl font-bold text-dark-100 mb-4">Departments</h2>
