@@ -335,7 +335,8 @@ router.post('/', async (req, res, next) => {
 
 // DELETE /api/v1/admin/agents/:agentId
 router.delete('/:agentId', async (req, res, next) => {
-  const client = await pool.connect();
+  let client = null;
+  let transactionStarted = false;
   try {
     const { agentId } = req.params;
     const force = parseBooleanParam(req.query.force ?? req.body?.force);
@@ -413,18 +414,46 @@ router.delete('/:agentId', async (req, res, next) => {
 
       openclawConfig.agents.list = nextAgents;
       const openclawContent = JSON.stringify(openclawConfig, null, 2) + '\n';
-      await applyConfigWithRateLimitRetry({
-        raw: openclawContent,
-        note: `Delete agent ${agentId} from runtime config`,
-      });
+      try {
+        await applyConfigWithRateLimitRetry({
+          raw: openclawContent,
+          note: `Delete agent ${agentId} from runtime config`,
+        });
+      } catch (configApplyError) {
+        if (configApplyError?.code === 'RATE_LIMITED') {
+          if (configApplyError.retryAfterSeconds) {
+            res.set('Retry-After', String(configApplyError.retryAfterSeconds));
+          }
+          return res.status(429).json({
+            error: {
+              message: configApplyError.message,
+              status: 429,
+              code: 'RATE_LIMITED',
+              retryAfterSeconds: configApplyError.retryAfterSeconds || null,
+            },
+          });
+        }
+        throw configApplyError;
+      }
       runtimeRemoved = true;
     }
 
+    client = await pool.connect();
     await client.query('BEGIN');
+    transactionStarted = true;
 
     const existingAgent = await client.query(
-      'SELECT agent_id, status, active FROM agents WHERE agent_id = $1 LIMIT 1 FOR UPDATE',
+      'SELECT agent_id, status, active, reports_to FROM agents WHERE agent_id = $1 LIMIT 1 FOR UPDATE',
       [agentId],
+    );
+
+    const existingAgentRow = existingAgent.rows[0] || null;
+    const dbAgentFound = Boolean(existingAgentRow);
+    const dbAlreadyDeprecated = Boolean(
+      existingAgentRow &&
+        existingAgentRow.status === 'deprecated' &&
+        existingAgentRow.active === false &&
+        !existingAgentRow.reports_to,
     );
 
     const clearedReportsToResult = await client.query(
@@ -460,13 +489,14 @@ router.delete('/:agentId', async (req, res, next) => {
       `UPDATE agents
        SET status = 'deprecated', active = FALSE, reports_to = NULL
        WHERE agent_id = $1
+         AND (status <> 'deprecated' OR active IS DISTINCT FROM FALSE OR reports_to IS NOT NULL)
        RETURNING agent_id, status, active`,
       [agentId],
     );
 
     await client.query('COMMIT');
+    transactionStarted = false;
 
-    const dbAgentFound = existingAgent.rows.length > 0;
     const revokedKeys = revokedKeysResult.rows.length;
     const removedAssignments = removedAssignmentsResult.rows.length;
     const reportsToCleared = clearedReportsToResult.rowCount || 0;
@@ -489,7 +519,7 @@ router.delete('/:agentId', async (req, res, next) => {
 
     const alreadyDeleted =
       !runtimeRemoved &&
-      !dbAgentFound &&
+      ((dbAgentFound && dbAlreadyDeprecated && !dbSoftDeleted) || !dbAgentFound) &&
       revokedKeys === 0 &&
       removedAssignments === 0 &&
       reportsToCleared === 0;
@@ -544,14 +574,16 @@ router.delete('/:agentId', async (req, res, next) => {
       },
     });
   } catch (error) {
-    try {
-      await client.query('ROLLBACK');
-    } catch (_rollbackError) {
-      // noop
+    if (client && transactionStarted) {
+      try {
+        await client.query('ROLLBACK');
+      } catch (_rollbackError) {
+        // noop
+      }
     }
     next(error);
   } finally {
-    client.release();
+    if (client) client.release();
   }
 });
 

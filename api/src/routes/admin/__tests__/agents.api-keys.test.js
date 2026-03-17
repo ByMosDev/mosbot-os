@@ -201,8 +201,35 @@ describe('admin agents API key routes', () => {
     const res = await request(app).delete('/api/v1/admin/agents/coo');
 
     expect(res.status).toBe(429);
+    expect(res.body.error.code).toBe('RATE_LIMITED');
+    expect(res.body.error.retryAfterSeconds).toBe(30);
     expect(res.body.error.message).toContain('retry after 30s');
-    expect(pool.query).toHaveBeenCalledWith('ROLLBACK');
+    expect(pool.connect).not.toHaveBeenCalled();
+  });
+
+  it('returns alreadyDeleted for an already-deprecated DB agent with no remaining cleanup', async () => {
+    parseOpenClawConfig.mockReturnValue({ agents: { list: [] } });
+
+    pool.query
+      .mockResolvedValueOnce({}) // BEGIN
+      .mockResolvedValueOnce({
+        rows: [{ agent_id: 'coo', active: false, status: 'deprecated', reports_to: null }],
+      }) // SELECT FOR UPDATE
+      .mockResolvedValueOnce({ rowCount: 0 }) // clear reports_to
+      .mockResolvedValueOnce({ rows: [] }) // revoke keys
+      .mockResolvedValueOnce({ rows: [] }) // assignments
+      .mockResolvedValueOnce({ rows: [] }) // soft delete no-op
+      .mockResolvedValueOnce({}); // COMMIT
+
+    const res = await request(app).delete('/api/v1/admin/agents/coo');
+
+    expect(res.status).toBe(200);
+    expect(res.body.data).toMatchObject({
+      agentId: 'coo',
+      alreadyDeleted: true,
+      deleted: false,
+      dbSoftDeleted: false,
+    });
   });
 
   it('deletes an agent end-to-end with runtime + DB cleanup', async () => {

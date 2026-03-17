@@ -77,10 +77,11 @@ export default function AgentDeleteConfirmModal({
                       <li>Soft-deletes agent metadata and clears reporting references.</li>
                     </ul>
 
-                    <label className="block text-xs font-medium text-dark-300 mb-1">
+                    <label htmlFor="agent-delete-confirm-input" className="block text-xs font-medium text-dark-300 mb-1">
                       Type <code className="text-red-400">{expected}</code> to confirm
                     </label>
                     <input
+                      id="agent-delete-confirm-input"
                       type="text"
                       value={confirmText}
                       onChange={(e) => setConfirmText(e.target.value)}
