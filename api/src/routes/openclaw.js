@@ -118,6 +118,18 @@ function isValidProjectId(projectId) {
   return typeof projectId === 'string' && PROJECT_ID_REGEX.test(projectId);
 }
 
+function ensureMainAgentEntry(agentsList) {
+  if (!Array.isArray(agentsList)) return false;
+
+  const hasMainEntry = agentsList.some((agent) => agent?.id === 'main');
+  if (hasMainEntry) return false;
+
+  const hasExplicitDefault = agentsList.some((agent) => agent?.default === true);
+  const mainEntry = hasExplicitDefault ? { id: 'main' } : { id: 'main', default: true };
+  agentsList.unshift(mainEntry);
+  return true;
+}
+
 async function getOrCreateSingleAgentApiKey({ agentId, createdByUserId, label }) {
   const activeKeys = await pool.query(
     `SELECT id
@@ -2443,8 +2455,8 @@ router.put('/agents/config/:agentId', requireAuth, requireAdmin, async (req, res
 
     // Update openclaw runtime config (only when there is an explicit agent entry to mutate)
     {
+      let configDirty = ensureMainAgentEntry(openclawAgentsList);
       const agentIndex = openclawAgentsList.findIndex((a) => a.id === agentId);
-      let configDirty = false;
 
       if (agentIndex >= 0) {
         const existing = openclawAgentsList[agentIndex];
@@ -2796,14 +2808,10 @@ router.post('/agents/config', requireAuth, requireAdmin, async (req, res, next) 
         if (agentData.heartbeatModel) newAgent.heartbeat.model = agentData.heartbeatModel;
       }
 
-      // Guard against default-agent hijack:
-      // OpenClaw fallback routing is: agents.list[].default -> first list entry -> main.
-      // If list is currently empty (or has no explicit default) and main is not listed,
-      // adding a non-main agent would accidentally make it the default. Ensure explicit main default.
-      const hasExplicitDefault = openclawConfig.agents.list.some((a) => a?.default === true);
-      const hasMainEntry = openclawConfig.agents.list.some((a) => a?.id === 'main');
-      if (!hasExplicitDefault && !hasMainEntry && agentData.id !== 'main') {
-        openclawConfig.agents.list.unshift({ id: 'main', default: true });
+      // Ensure explicit main entry exists in agents.list for MosBot/OpenClaw consistency.
+      // If there is no explicit default yet, main is set as default to prevent fallback hijack.
+      if (agentData.id !== 'main') {
+        ensureMainAgentEntry(openclawConfig.agents.list);
       }
 
       if (agentData.id === 'main') {
