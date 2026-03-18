@@ -3250,6 +3250,8 @@ router.post(
       });
     }
 
+    await ensureDocsLinkIfMissing(agentData.id);
+
     try {
       const assignedProjects = await getAssignedProjectsForAgent(agentData.id);
       for (const assignedProject of assignedProjects) {

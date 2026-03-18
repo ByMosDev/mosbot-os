@@ -1918,6 +1918,7 @@ describe('OpenClaw Routes', () => {
 
       expect(response.status).toBe(200);
       expect(response.body.data.agentId).toBe('coo');
+      expect(ensureDocsLinkIfMissing).toHaveBeenCalledWith('coo');
       expect(response.body.data.updatedFiles).toContain('/workspace-custom-coo/BOOTSTRAP.md');
       expect(writePaths).toEqual(
         expect.arrayContaining([
