@@ -6,9 +6,16 @@ import {
   FolderOpenIcon,
   ArchiveBoxIcon,
   TrashIcon,
+  WrenchScrewdriverIcon,
 } from '@heroicons/react/24/outline';
 import Header from '../components/Header';
-import { createProject, getProjects, updateProject, deleteProject } from '../api/client';
+import {
+  createProject,
+  getProjects,
+  updateProject,
+  deleteProject,
+  repairProjectLinkHealth,
+} from '../api/client';
 import { useAuthStore } from '../stores/authStore';
 import { useToastStore } from '../stores/toastStore';
 import { normalizeProjectSlug } from '../utils/projectSlug';
@@ -230,6 +237,7 @@ export default function Projects() {
   const [isSavingProject, setIsSavingProject] = useState(false);
   const [deletingProjectId, setDeletingProjectId] = useState(null);
   const [togglingArchiveProjectId, setTogglingArchiveProjectId] = useState(null);
+  const [isRepairingLinks, setIsRepairingLinks] = useState(false);
 
   const loadProjects = useCallback(async () => {
     setIsLoadingProjects(true);
@@ -342,6 +350,22 @@ export default function Projects() {
     }
   };
 
+  const handleRepairMissingLinks = async () => {
+    setIsRepairingLinks(true);
+    try {
+      const result = await repairProjectLinkHealth({ limit: 200 });
+      showToast(
+        `Link repair complete · repaired ${result?.repaired ?? 0}, failed ${result?.failed ?? 0}`,
+        result?.failed ? 'warning' : 'success',
+      );
+      await loadProjects();
+    } catch (err) {
+      showToast(err?.response?.data?.error?.message || err.message || 'Failed to repair project links', 'error');
+    } finally {
+      setIsRepairingLinks(false);
+    }
+  };
+
   return (
     <div className="flex flex-col h-full">
       <Header title="Projects" subtitle="Registry first. Project detail and files live one level down." />
@@ -358,16 +382,27 @@ export default function Projects() {
             </div>
 
             {isAdmin() && (
-              <button
-                className="btn-primary inline-flex items-center gap-2"
-                onClick={() => {
-                  setEditingProject(null);
-                  setShowCreateForm((prev) => !prev);
-                }}
-              >
-                <PlusIcon className="w-4 h-4" />
-                {showCreateForm ? 'Close' : 'New Project'}
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  className="btn-secondary inline-flex items-center gap-2 disabled:opacity-50"
+                  onClick={handleRepairMissingLinks}
+                  disabled={isRepairingLinks}
+                  title="Recreate missing /projects links for main and assigned agents"
+                >
+                  <WrenchScrewdriverIcon className="w-4 h-4" />
+                  {isRepairingLinks ? 'Fixing links…' : 'Fix missing links'}
+                </button>
+                <button
+                  className="btn-primary inline-flex items-center gap-2"
+                  onClick={() => {
+                    setEditingProject(null);
+                    setShowCreateForm((prev) => !prev);
+                  }}
+                >
+                  <PlusIcon className="w-4 h-4" />
+                  {showCreateForm ? 'Close' : 'New Project'}
+                </button>
+              </div>
             )}
           </div>
 
