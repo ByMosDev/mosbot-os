@@ -8,21 +8,25 @@ vi.mock('../api/client', () => ({
   createProject: vi.fn(),
   updateProject: vi.fn(),
   deleteProject: vi.fn(),
+  repairProjectLinkHealth: vi.fn(),
 }));
 
 vi.mock('../stores/authStore', () => ({
   useAuthStore: () => ({ isAdmin: () => true }),
 }));
 
+const showToast = vi.fn();
+
 vi.mock('../stores/toastStore', () => ({
-  useToastStore: () => ({ showToast: vi.fn() }),
+  useToastStore: () => ({ showToast }),
 }));
 
-const { getProjects, updateProject } = await import('../api/client');
+const { getProjects, updateProject, repairProjectLinkHealth } = await import('../api/client');
 
 describe('Projects', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    showToast.mockReset();
   });
 
   it('renders registry summary and project cards', async () => {
@@ -157,6 +161,39 @@ describe('Projects', () => {
 
     await waitFor(() => {
       expect(updateProject).toHaveBeenCalledWith('p1', expect.objectContaining({ status: 'archived' }));
+    });
+  });
+
+  it('repairs missing links from the projects registry', async () => {
+    getProjects.mockResolvedValue([
+      {
+        id: 'p1',
+        slug: 'project-alpha',
+        name: 'Project Alpha',
+        description: 'Sample project description',
+        root_path: '/projects/project-alpha',
+        status: 'active',
+        assigned_agents: 2,
+        updated_at: '2026-03-12T19:00:00.000Z',
+      },
+    ]);
+    repairProjectLinkHealth.mockResolvedValue({ repaired: 2, failed: 0 });
+
+    render(
+      <MemoryRouter>
+        <Projects />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Fix missing links' })).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Fix missing links' }));
+
+    await waitFor(() => {
+      expect(repairProjectLinkHealth).toHaveBeenCalledWith({ limit: 200 });
+      expect(showToast).toHaveBeenCalledWith('Link repair complete · repaired 2, failed 0', 'success');
     });
   });
 });
