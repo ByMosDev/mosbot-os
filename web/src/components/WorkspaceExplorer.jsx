@@ -28,6 +28,10 @@ import CreateFolderModal from './CreateFolderModal';
 import RenameModal from './RenameModal';
 import DeleteConfirmModal from './DeleteConfirmModal';
 import { classNames, isPathInsideSymlink, isFileOrPathInsideSymlink } from '../utils/helpers';
+import {
+  extractAgentIdFromWorkspacePath,
+  isAbsoluteWorkspacePath,
+} from '../utils/workspacePaths';
 import { useAgentStore } from '../stores/agentStore';
 
 /**
@@ -604,6 +608,8 @@ export default function WorkspaceExplorer({
         uploadTargetPath === '/'
           ? `/${browserFile.name}`
           : `${uploadTargetPath}/${browserFile.name}`;
+      const rawPath = isAbsoluteWorkspacePath(destinationPath);
+      const destinationAgentId = extractAgentIdFromWorkspacePath(destinationPath) || agentId;
 
       try {
         const base64Content = await readBrowserFileAsBase64(browserFile);
@@ -613,7 +619,8 @@ export default function WorkspaceExplorer({
             path: destinationPath,
             content: base64Content,
             encoding: 'base64',
-            agentId,
+            agentId: destinationAgentId,
+            rawPath,
           });
         } catch (error) {
           const isConflict =
@@ -635,7 +642,8 @@ export default function WorkspaceExplorer({
             path: destinationPath,
             content: base64Content,
             encoding: 'base64',
-            agentId,
+            agentId: destinationAgentId,
+            rawPath,
           });
         }
 
@@ -645,7 +653,14 @@ export default function WorkspaceExplorer({
       }
     }
 
-    await fetchListing({ path: uploadTargetPath, recursive: false, force: true, agentId });
+    // Refresh absolute workspace directories without re-prepending workspaceRootPath.
+    await fetchListing({
+      path: uploadTargetPath,
+      recursive: false,
+      force: true,
+      agentId: extractAgentIdFromWorkspacePath(uploadTargetPath) || agentId,
+      rawPath: isAbsoluteWorkspacePath(uploadTargetPath),
+    });
 
     if (uploadedCount > 0) {
       showToast(
@@ -672,7 +687,17 @@ export default function WorkspaceExplorer({
     if (!file || file.type !== 'file') return;
 
     try {
-      const fileData = await fetchFileContent({ path: file.path, force: true, agentId });
+      const isWorkspacePath = isAbsoluteWorkspacePath(file.path);
+      const fileAgentId =
+        file.agentId ||
+        (isWorkspacePath ? extractAgentIdFromWorkspacePath(file.path) : null) ||
+        agentId;
+      const fileData = await fetchFileContent({
+        path: file.path,
+        force: true,
+        agentId: fileAgentId,
+        rawPath: !!file.fullPath || isWorkspacePath,
+      });
       const encoding = fileData?.encoding || 'utf8';
       const rawContent = fileData?.content || '';
 
